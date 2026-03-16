@@ -23,6 +23,7 @@ dist/
 
 # Local environment files
 .env
+config/settings.yaml
 
 # Local data outputs
 data/*.db
@@ -31,4 +32,3 @@ data/*.sqlite3
 
 # OS files
 .DS_Store
-
