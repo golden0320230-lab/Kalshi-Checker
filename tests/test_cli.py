@@ -24,3 +24,4 @@ def test_help_lists_project_scope() -> None:
     assert "flag" in result.stdout
     assert "ingest" in result.stdout
     assert "init-db" in result.stdout
+    assert "watch" in result.stdout

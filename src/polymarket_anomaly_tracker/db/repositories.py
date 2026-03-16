@@ -647,6 +647,51 @@ class DatabaseRepository:
             self.session.scalar(select(Market).where(Market.market_id == market_id)),
         )
 
+    def get_latest_position_snapshot_time(self, wallet_address: str) -> datetime | None:
+        """Return the latest position snapshot timestamp for one wallet."""
+
+        latest_snapshot_time = cast(
+            datetime | None,
+            self.session.scalar(
+                select(func.max(PositionSnapshot.snapshot_time)).where(
+                    PositionSnapshot.wallet_address == wallet_address
+                )
+            ),
+        )
+        if latest_snapshot_time is None:
+            return None
+        return _restore_utc_datetime(latest_snapshot_time)
+
+    def list_position_snapshots(
+        self,
+        *,
+        wallet_address: str,
+        snapshot_time: datetime,
+    ) -> list[PositionSnapshot]:
+        """Return one wallet's position rows for an exact snapshot time."""
+
+        normalized_snapshot_time = _normalize_required_datetime(snapshot_time)
+        stmt = (
+            select(PositionSnapshot)
+            .where(
+                PositionSnapshot.wallet_address == wallet_address,
+                PositionSnapshot.snapshot_time == normalized_snapshot_time,
+            )
+            .order_by(PositionSnapshot.market_id, PositionSnapshot.outcome)
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_latest_position_snapshots(self, wallet_address: str) -> list[PositionSnapshot]:
+        """Return the most recent position snapshot rows for one wallet."""
+
+        latest_snapshot_time = self.get_latest_position_snapshot_time(wallet_address)
+        if latest_snapshot_time is None:
+            return []
+        return self.list_position_snapshots(
+            wallet_address=wallet_address,
+            snapshot_time=latest_snapshot_time,
+        )
+
     def list_flagged_wallets(self) -> list[Wallet]:
         """Return flagged wallets ordered for deterministic display."""
 
@@ -836,6 +881,23 @@ class DatabaseRepository:
                 select(WatchlistEntry).where(WatchlistEntry.wallet_address == wallet_address)
             ),
         )
+
+    def update_watchlist_last_checked_at(
+        self,
+        wallet_address: str,
+        *,
+        checked_at: datetime,
+    ) -> WatchlistEntry:
+        """Update the last checked timestamp for an existing watchlist entry."""
+
+        watchlist_entry = self.get_watchlist_entry(wallet_address)
+        if watchlist_entry is None:
+            msg = f"Watchlist entry not found for wallet: {wallet_address}"
+            raise ValueError(msg)
+
+        watchlist_entry.last_checked_at = _normalize_required_datetime(checked_at)
+        self.session.flush()
+        return watchlist_entry
 
     def list_recent_alerts(
         self,
