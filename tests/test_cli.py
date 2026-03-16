@@ -1,0 +1,22 @@
+"""Smoke tests for the CLI bootstrap."""
+
+from typer.testing import CliRunner
+
+from polymarket_anomaly_tracker.main import app
+
+runner = CliRunner()
+
+
+def test_root_command_displays_bootstrap_message() -> None:
+    result = runner.invoke(app)
+
+    assert result.exit_code == 0
+    assert "bootstrap is installed" in result.stdout
+
+
+def test_help_lists_project_scope() -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Analyze public Polymarket data locally" in result.stdout
+    assert "track flagged traders over time" in result.stdout
