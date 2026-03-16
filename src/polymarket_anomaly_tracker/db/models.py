@@ -213,6 +213,7 @@ class WalletFeatureSnapshot(CreatedAtMixin, Base):
     timing_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     composite_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    adjusted_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     explanations_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
 
 
