@@ -7,6 +7,7 @@ import logging
 import typer
 from rich.console import Console
 
+from polymarket_anomaly_tracker.cli.init_cmd import init_db_command
 from polymarket_anomaly_tracker.config import get_settings
 from polymarket_anomaly_tracker.logging_config import configure_logging
 
@@ -19,6 +20,7 @@ app = typer.Typer(
 )
 console = Console()
 logger = logging.getLogger(__name__)
+app.command("init-db")(init_db_command)
 
 
 @app.callback(invoke_without_command=True)
