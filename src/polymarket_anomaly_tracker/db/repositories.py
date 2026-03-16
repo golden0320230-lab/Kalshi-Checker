@@ -583,6 +583,30 @@ class DatabaseRepository:
             self.session.scalar(select(Wallet).where(Wallet.wallet_address == wallet_address)),
         )
 
+    def list_wallets(self, *, limit: int | None = None) -> list[Wallet]:
+        """Return wallets in deterministic order for enrichment batches."""
+
+        stmt = select(Wallet).order_by(Wallet.first_seen_at, Wallet.wallet_address)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self.session.scalars(stmt))
+
+    def get_event(self, event_id: str) -> Event | None:
+        """Return an event by upstream ID, if present."""
+
+        return cast(
+            Event | None,
+            self.session.scalar(select(Event).where(Event.event_id == event_id)),
+        )
+
+    def get_market(self, market_id: str) -> Market | None:
+        """Return a market by upstream key, if present."""
+
+        return cast(
+            Market | None,
+            self.session.scalar(select(Market).where(Market.market_id == market_id)),
+        )
+
     def list_flagged_wallets(self) -> list[Wallet]:
         """Return flagged wallets ordered for deterministic display."""
 
