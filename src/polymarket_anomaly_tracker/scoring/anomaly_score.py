@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import pandas as pd
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
@@ -184,6 +185,7 @@ def score_and_persist_wallets(
 def persist_score_frame(session: Session, score_frame: pd.DataFrame) -> None:
     """Persist scored feature snapshots using the existing repository layer."""
 
+    _ensure_feature_snapshot_schema_is_current(session)
     repository = DatabaseRepository(session)
     explanation_payloads = build_explanation_payloads(score_frame)
     for row in cast(list[dict[str, object]], score_frame.to_dict(orient="records")):
@@ -290,6 +292,24 @@ def _resolve_as_of_time(
     if candidate_values:
         return max(candidate_values)
     return datetime.now(UTC)
+
+
+def _ensure_feature_snapshot_schema_is_current(session: Session) -> None:
+    bind = session.get_bind()
+    inspector = inspect(bind)
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("wallet_feature_snapshots")
+    }
+    if "adjusted_score" in existing_columns:
+        return
+
+    database_url = _normalize_required_string(bind.engine.url.render_as_string(hide_password=False))
+    raise RuntimeError(
+        "Database schema is out of date for scoring. "
+        "Issue 10 requires the `wallet_feature_snapshots.adjusted_score` column. "
+        "Run `uv run pmat init-db` against the same database URL, then retry. "
+        f"Current database: {database_url}"
+    )
 
 
 def _collect_datetime_candidates(frame: pd.DataFrame, column_name: str) -> list[datetime]:
