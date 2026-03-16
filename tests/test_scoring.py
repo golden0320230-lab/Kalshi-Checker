@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from alembic import command
 
-from polymarket_anomaly_tracker.db.init_db import init_database
+from polymarket_anomaly_tracker.db.init_db import build_alembic_config, init_database
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import create_session_factory, session_scope
 from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
@@ -143,6 +144,22 @@ def test_score_and_persist_wallets_outputs_raw_and_normalized_scores(
     assert explanation_payload["sample_size"]["trades_count"] == 4
     assert explanation_payload["normalized_features"]["normalized_win_rate"] == pytest.approx(1.0)
     assert explanation_payload["top_reasons"]
+
+
+def test_score_and_persist_wallets_requires_issue_10_migration(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'scoring-pre-issue10.db'}"
+    command.upgrade(build_alembic_config(database_url), "20260315_0001")
+    seed_scoring_test_data(database_url)
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        with pytest.raises(RuntimeError, match="uv run pmat init-db"):
+            score_and_persist_wallets(
+                session,
+                as_of_time=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
+                score_eligible_min_resolved_markets=3,
+                score_eligible_min_trades=3,
+            )
 
 
 def seed_scoring_test_data(database_url: str) -> None:

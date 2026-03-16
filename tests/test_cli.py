@@ -21,5 +21,6 @@ def test_help_lists_project_scope() -> None:
     assert result.exit_code == 0
     assert "Analyze public Polymarket data locally" in result.stdout
     assert "track flagged traders over time" in result.stdout
+    assert "flag" in result.stdout
     assert "ingest" in result.stdout
     assert "init-db" in result.stdout

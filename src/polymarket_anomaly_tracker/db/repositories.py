@@ -40,6 +40,23 @@ class WalletScoreRow:
     trades_count: int
 
 
+@dataclass(frozen=True)
+class WalletFeatureSnapshotRow:
+    """Run-scoped wallet snapshot row used by flagging and watchlist sync."""
+
+    wallet_address: str
+    display_name: str | None
+    flag_status: str
+    is_flagged: bool
+    as_of_time: datetime
+    adjusted_score: float | None
+    composite_score: float | None
+    confidence_score: float | None
+    resolved_markets_count: int
+    trades_count: int
+    explanations_json: str
+
+
 class DatabaseRepository:
     """Explicit repository for deterministic DB access."""
 
@@ -587,6 +604,25 @@ class DatabaseRepository:
             self.session.scalar(select(Wallet).where(Wallet.wallet_address == wallet_address)),
         )
 
+    def update_wallet_flag_state(
+        self,
+        wallet_address: str,
+        *,
+        flag_status: str,
+        is_flagged: bool,
+    ) -> Wallet:
+        """Update wallet classification state without clobbering profile fields."""
+
+        wallet = self.get_wallet(wallet_address)
+        if wallet is None:
+            msg = f"Wallet not found for flag update: {wallet_address}"
+            raise ValueError(msg)
+
+        wallet.flag_status = flag_status
+        wallet.is_flagged = is_flagged
+        self.session.flush()
+        return wallet
+
     def list_wallets(self, *, limit: int | None = None) -> list[Wallet]:
         """Return wallets in deterministic order for enrichment batches."""
 
@@ -634,6 +670,69 @@ class DatabaseRepository:
             .limit(1)
         )
         return cast(WalletFeatureSnapshot | None, self.session.scalar(stmt))
+
+    def get_latest_feature_snapshot_time(self) -> datetime | None:
+        """Return the latest scoring snapshot timestamp across all wallets."""
+
+        latest_as_of_time = cast(
+            datetime | None,
+            self.session.scalar(select(func.max(WalletFeatureSnapshot.as_of_time))),
+        )
+        if latest_as_of_time is None:
+            return None
+        return _restore_utc_datetime(latest_as_of_time)
+
+    def list_wallet_feature_snapshot_rows(
+        self,
+        *,
+        as_of_time: datetime,
+    ) -> list[WalletFeatureSnapshotRow]:
+        """Return scored wallet snapshot rows for a single scoring run."""
+
+        normalized_as_of_time = _normalize_required_datetime(as_of_time)
+        stmt = (
+            select(
+                Wallet.wallet_address,
+                Wallet.display_name,
+                Wallet.flag_status,
+                Wallet.is_flagged,
+                WalletFeatureSnapshot.as_of_time,
+                WalletFeatureSnapshot.adjusted_score,
+                WalletFeatureSnapshot.composite_score,
+                WalletFeatureSnapshot.confidence_score,
+                WalletFeatureSnapshot.resolved_markets_count,
+                WalletFeatureSnapshot.trades_count,
+                WalletFeatureSnapshot.explanations_json,
+            )
+            .join(
+                WalletFeatureSnapshot,
+                Wallet.wallet_address == WalletFeatureSnapshot.wallet_address,
+            )
+            .where(WalletFeatureSnapshot.as_of_time == normalized_as_of_time)
+            .order_by(
+                desc(WalletFeatureSnapshot.adjusted_score),
+                desc(WalletFeatureSnapshot.composite_score),
+                desc(WalletFeatureSnapshot.confidence_score),
+                Wallet.wallet_address,
+            )
+        )
+        rows = self.session.execute(stmt).all()
+        return [
+            WalletFeatureSnapshotRow(
+                wallet_address=row.wallet_address,
+                display_name=row.display_name,
+                flag_status=row.flag_status,
+                is_flagged=row.is_flagged,
+                as_of_time=_restore_utc_datetime(row.as_of_time),
+                adjusted_score=row.adjusted_score,
+                composite_score=row.composite_score,
+                confidence_score=row.confidence_score,
+                resolved_markets_count=row.resolved_markets_count,
+                trades_count=row.trades_count,
+                explanations_json=row.explanations_json,
+            )
+            for row in rows
+        ]
 
     def list_wallet_scores(
         self,
@@ -727,6 +826,16 @@ class DatabaseRepository:
             .order_by(WatchlistEntry.priority, WatchlistEntry.wallet_address)
         )
         return list(self.session.scalars(stmt))
+
+    def get_watchlist_entry(self, wallet_address: str) -> WatchlistEntry | None:
+        """Return a watchlist entry by wallet address, if present."""
+
+        return cast(
+            WatchlistEntry | None,
+            self.session.scalar(
+                select(WatchlistEntry).where(WatchlistEntry.wallet_address == wallet_address)
+            ),
+        )
 
     def list_recent_alerts(
         self,
