@@ -33,6 +33,7 @@ class WalletScoreRow:
     flag_status: str
     is_flagged: bool
     as_of_time: datetime
+    adjusted_score: float | None
     composite_score: float | None
     confidence_score: float | None
     resolved_markets_count: int
@@ -384,6 +385,7 @@ class DatabaseRepository:
         timing_score: float | None = None,
         composite_score: float | None = None,
         confidence_score: float | None = None,
+        adjusted_score: float | None = None,
         explanations_json: str = "{}",
     ) -> WalletFeatureSnapshot:
         """Insert or update a persisted wallet feature snapshot."""
@@ -415,6 +417,7 @@ class DatabaseRepository:
                 timing_score=timing_score,
                 composite_score=composite_score,
                 confidence_score=confidence_score,
+                adjusted_score=adjusted_score,
                 explanations_json=explanations_json,
             )
             self.session.add(feature_snapshot)
@@ -432,6 +435,7 @@ class DatabaseRepository:
             feature_snapshot.timing_score = timing_score
             feature_snapshot.composite_score = composite_score
             feature_snapshot.confidence_score = confidence_score
+            feature_snapshot.adjusted_score = adjusted_score
             feature_snapshot.explanations_json = explanations_json
 
         self.session.flush()
@@ -655,6 +659,7 @@ class DatabaseRepository:
                 Wallet.flag_status,
                 Wallet.is_flagged,
                 WalletFeatureSnapshot.as_of_time,
+                WalletFeatureSnapshot.adjusted_score,
                 WalletFeatureSnapshot.composite_score,
                 WalletFeatureSnapshot.confidence_score,
                 WalletFeatureSnapshot.resolved_markets_count,
@@ -674,6 +679,7 @@ class DatabaseRepository:
                 ),
             )
             .order_by(
+                desc(WalletFeatureSnapshot.adjusted_score),
                 desc(WalletFeatureSnapshot.composite_score),
                 desc(WalletFeatureSnapshot.confidence_score),
                 Wallet.wallet_address,
@@ -693,6 +699,7 @@ class DatabaseRepository:
                 flag_status=row.flag_status,
                 is_flagged=row.is_flagged,
                 as_of_time=_restore_utc_datetime(row.as_of_time),
+                adjusted_score=row.adjusted_score,
                 composite_score=row.composite_score,
                 confidence_score=row.confidence_score,
                 resolved_markets_count=row.resolved_markets_count,
