@@ -17,6 +17,8 @@ Issue 01 bootstrap is in place. The repository currently provides:
 
 - `uv`-managed Python packaging
 - a minimal `typer` CLI exposed as `pmat`
+- typed application settings with `.env` and YAML support
+- centralized console logging
 - `ruff`, `mypy`, `pytest`, and `pre-commit` configuration
 - a smoke test that validates the CLI entry point
 
@@ -29,4 +31,3 @@ uv sync
 uv run pmat --help
 uv run pytest
 ```
-
