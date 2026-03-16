@@ -10,6 +10,7 @@ from rich.console import Console
 from polymarket_anomaly_tracker.cli.flag_cmd import flag_app
 from polymarket_anomaly_tracker.cli.ingest_cmd import ingest_app
 from polymarket_anomaly_tracker.cli.init_cmd import init_db_command
+from polymarket_anomaly_tracker.cli.watch_cmd import watch_app
 from polymarket_anomaly_tracker.config import get_settings
 from polymarket_anomaly_tracker.logging_config import configure_logging
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 app.command("init-db")(init_db_command)
 app.add_typer(flag_app, name="flag")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(watch_app, name="watch")
 
 
 @app.callback(invoke_without_command=True)
