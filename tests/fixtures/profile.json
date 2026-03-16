@@ -1,0 +1,18 @@
+{
+  "createdAt": "2026-03-16T00:00:00Z",
+  "proxyWallet": "0x1111111111111111111111111111111111111111",
+  "profileImage": "https://example.com/profile.png",
+  "displayUsernamePublic": true,
+  "bio": "Public trader profile",
+  "pseudonym": "Trader Alpha",
+  "name": "Alpha",
+  "users": [
+    {
+      "id": "user-1",
+      "creator": true,
+      "mod": false
+    }
+  ],
+  "xUsername": "alpha_x",
+  "verifiedBadge": true
+}

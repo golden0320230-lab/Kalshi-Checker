@@ -1,0 +1,21 @@
+[
+  {
+    "proxyWallet": "0x1111111111111111111111111111111111111111",
+    "asset": "asset-1",
+    "conditionId": "condition-1",
+    "avgPrice": 0.44,
+    "totalBought": 44.0,
+    "realizedPnl": 12.0,
+    "curPrice": 0.56,
+    "timestamp": 1710547200,
+    "title": "Will candidate X win?",
+    "slug": "candidate-x-win",
+    "icon": "https://example.com/icon.png",
+    "eventSlug": "election-night",
+    "outcome": "YES",
+    "outcomeIndex": 0,
+    "oppositeOutcome": "NO",
+    "oppositeAsset": "asset-2",
+    "endDate": "2026-03-16T00:00:00Z"
+  }
+]
