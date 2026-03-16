@@ -8,10 +8,11 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from polymarket_anomaly_tracker.db.models import ClosedPosition, Trade, Wallet
+from polymarket_anomaly_tracker.db.models import ClosedPosition, Market, Trade, Wallet
 from polymarket_anomaly_tracker.db.session import create_session_factory
 from polymarket_anomaly_tracker.features.base import (
     CLOSED_POSITION_DATASET_COLUMNS,
+    MARKET_DATASET_COLUMNS,
     TRADE_DATASET_COLUMNS,
     WALLET_DATASET_COLUMNS,
     WalletAnalysisDataset,
@@ -32,6 +33,7 @@ def build_wallet_analysis_dataset(
             wallets=empty_frame(WALLET_DATASET_COLUMNS),
             trades=empty_frame(TRADE_DATASET_COLUMNS),
             closed_positions=empty_frame(CLOSED_POSITION_DATASET_COLUMNS),
+            markets=empty_frame(MARKET_DATASET_COLUMNS),
         )
 
     wallet_stmt = (
@@ -48,6 +50,8 @@ def build_wallet_analysis_dataset(
             Trade.wallet_address,
             Trade.trade_id,
             Trade.market_id,
+            Trade.outcome,
+            Trade.side,
             Trade.price,
             Trade.size,
             Trade.notional,
@@ -67,6 +71,7 @@ def build_wallet_analysis_dataset(
         )
         .order_by(ClosedPosition.wallet_address, ClosedPosition.closed_at, ClosedPosition.market_id)
     )
+    market_stmt = select(Market.market_id, Market.category).order_by(Market.market_id)
 
     if normalized_wallet_addresses is not None:
         wallet_stmt = wallet_stmt.where(Wallet.wallet_address.in_(normalized_wallet_addresses))
@@ -74,6 +79,20 @@ def build_wallet_analysis_dataset(
         closed_position_stmt = closed_position_stmt.where(
             ClosedPosition.wallet_address.in_(normalized_wallet_addresses)
         )
+        relevant_market_ids = {
+            row.market_id
+            for row in session.execute(trade_stmt.with_only_columns(Trade.market_id)).all()
+        }
+        relevant_market_ids.update(
+            row.market_id
+            for row in session.execute(
+                closed_position_stmt.with_only_columns(ClosedPosition.market_id)
+            ).all()
+        )
+        if relevant_market_ids:
+            market_stmt = market_stmt.where(Market.market_id.in_(sorted(relevant_market_ids)))
+        else:
+            market_stmt = market_stmt.where(Market.market_id.in_([]))
 
     wallet_frame = _normalize_wallet_frame(
         pd.DataFrame(session.execute(wallet_stmt).mappings().all(), columns=WALLET_DATASET_COLUMNS)
@@ -87,10 +106,14 @@ def build_wallet_analysis_dataset(
             columns=CLOSED_POSITION_DATASET_COLUMNS,
         )
     )
+    market_frame = _normalize_market_frame(
+        pd.DataFrame(session.execute(market_stmt).mappings().all(), columns=MARKET_DATASET_COLUMNS)
+    )
     return WalletAnalysisDataset(
         wallets=wallet_frame,
         trades=trade_frame,
         closed_positions=closed_position_frame,
+        markets=market_frame,
     )
 
 
@@ -155,4 +178,13 @@ def _normalize_closed_position_frame(frame: pd.DataFrame) -> pd.DataFrame:
     )
     normalized_frame["roi"] = pd.to_numeric(normalized_frame["roi"], errors="coerce")
     normalized_frame["closed_at"] = pd.to_datetime(normalized_frame["closed_at"], utc=True)
+    return normalized_frame
+
+
+def _normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return empty_frame(MARKET_DATASET_COLUMNS)
+
+    normalized_frame = frame.copy()
+    normalized_frame["category"] = normalized_frame["category"].astype("object")
     return normalized_frame
