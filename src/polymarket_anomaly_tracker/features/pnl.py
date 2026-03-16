@@ -11,6 +11,7 @@ from polymarket_anomaly_tracker.features.base import (
     CORE_PNL_FEATURE_COLUMNS,
     WalletAnalysisDataset,
     WalletCorePnLFeatures,
+    build_wallet_index_frame,
     empty_frame,
 )
 
@@ -71,50 +72,7 @@ def compute_core_pnl_features(dataset: WalletAnalysisDataset) -> list[WalletCore
 
 
 def _build_wallet_index_frame(dataset: WalletAnalysisDataset) -> pd.DataFrame:
-    if dataset.wallets.empty and dataset.trades.empty and dataset.closed_positions.empty:
-        return empty_frame(("wallet_address", "display_name"))
-
-    wallet_index = empty_frame(("wallet_address", "display_name"))
-    if not dataset.wallets.empty:
-        wallet_index = dataset.wallets.loc[:, ["wallet_address", "display_name"]].copy()
-
-    fallback_addresses = sorted(
-        {
-            *dataset.trades.get("wallet_address", pd.Series(dtype="object")).dropna().tolist(),
-            *dataset.closed_positions.get("wallet_address", pd.Series(dtype="object"))
-            .dropna()
-            .tolist(),
-        }
-    )
-    if wallet_index.empty:
-        wallet_index = pd.DataFrame(
-            {
-                "wallet_address": fallback_addresses,
-                "display_name": [None] * len(fallback_addresses),
-            }
-        )
-    else:
-        existing_addresses = set(wallet_index["wallet_address"].tolist())
-        missing_addresses = [
-            wallet_address
-            for wallet_address in fallback_addresses
-            if wallet_address not in existing_addresses
-        ]
-        if missing_addresses:
-            wallet_index = pd.concat(
-                [
-                    wallet_index,
-                    pd.DataFrame(
-                        {
-                            "wallet_address": missing_addresses,
-                            "display_name": [None] * len(missing_addresses),
-                        }
-                    ),
-                ],
-                ignore_index=True,
-            )
-
-    return wallet_index.sort_values("wallet_address").reset_index(drop=True)
+    return build_wallet_index_frame(dataset)
 
 
 def _build_trade_counts(dataset: WalletAnalysisDataset) -> pd.DataFrame:
