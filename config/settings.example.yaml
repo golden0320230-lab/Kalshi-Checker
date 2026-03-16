@@ -1,0 +1,25 @@
+env: development
+log_level: INFO
+database_url: sqlite:///data/polymarket_anomaly_tracker.db
+
+leaderboard:
+  window_days: 30
+  market_categories:
+    - politics
+    - macro
+    - crypto
+
+watchlist:
+  candidate_score_threshold: 70.0
+  flagged_score_threshold: 85.0
+  persistence_days: 14
+
+scoring:
+  candidate_threshold: 70.0
+  flagged_threshold: 85.0
+  min_trades: 10
+
+alerts:
+  min_position_change_usd: 1000.0
+  min_trade_notional_usd: 500.0
+  cooccurrence_window_minutes: 30
