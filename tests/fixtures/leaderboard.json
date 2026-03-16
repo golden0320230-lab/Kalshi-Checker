@@ -1,0 +1,11 @@
+[
+  {
+    "rank": "1",
+    "proxyWallet": "0x1111111111111111111111111111111111111111",
+    "userName": "alpha",
+    "vol": 12345.67,
+    "pnl": 456.78,
+    "profileImage": "https://example.com/profile.png",
+    "xUsername": "alpha_x"
+  }
+]

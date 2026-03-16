@@ -1,0 +1,25 @@
+[
+  {
+    "proxyWallet": "0x1111111111111111111111111111111111111111",
+    "asset": "asset-1",
+    "conditionId": "condition-1",
+    "size": 100.0,
+    "avgPrice": 0.61,
+    "initialValue": 61.0,
+    "currentValue": 72.0,
+    "cashPnl": 11.0,
+    "percentPnl": 0.18,
+    "totalBought": 61.0,
+    "realizedPnl": 0.0,
+    "percentRealizedPnl": 0.0,
+    "curPrice": 0.72,
+    "redeemable": false,
+    "mergeable": false,
+    "title": "Will candidate X win?",
+    "slug": "candidate-x-win",
+    "icon": "https://example.com/icon.png",
+    "eventSlug": "election-night",
+    "outcome": "YES",
+    "outcomeIndex": 0
+  }
+]

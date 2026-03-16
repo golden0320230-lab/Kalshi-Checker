@@ -1,0 +1,18 @@
+{
+  "id": "12345",
+  "question": "Will candidate X win?",
+  "conditionId": "condition-1",
+  "slug": "candidate-x-win",
+  "category": "Politics",
+  "endDate": "2026-11-05T00:00:00Z",
+  "startDate": "2026-10-01T00:00:00Z",
+  "liquidity": 10000.5,
+  "volume": 50234.9,
+  "active": true,
+  "closed": false,
+  "archived": false,
+  "image": "https://example.com/market.png",
+  "icon": "https://example.com/icon.png",
+  "marketType": "binary",
+  "description": "Example market"
+}

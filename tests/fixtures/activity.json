@@ -1,0 +1,25 @@
+[
+  {
+    "proxyWallet": "0x1111111111111111111111111111111111111111",
+    "timestamp": 1710547200,
+    "conditionId": "condition-1",
+    "type": "TRADE",
+    "size": 100.0,
+    "usdcSize": 61.0,
+    "transactionHash": "0xaaa",
+    "price": 0.61,
+    "asset": "asset-1",
+    "side": "BUY",
+    "outcomeIndex": 0,
+    "title": "Will candidate X win?",
+    "slug": "candidate-x-win",
+    "icon": "https://example.com/icon.png",
+    "eventSlug": "election-night",
+    "outcome": "YES",
+    "name": "Alpha",
+    "pseudonym": "Trader Alpha",
+    "bio": "Public trader profile",
+    "profileImage": "https://example.com/profile.png",
+    "profileImageOptimized": "https://example.com/profile-optimized.png"
+  }
+]
