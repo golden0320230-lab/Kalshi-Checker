@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import inspect, select
+from sqlalchemy import func, inspect, select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
@@ -31,6 +31,7 @@ from polymarket_anomaly_tracker.db.models import (
     WalletFeatureSnapshot,
     WatchlistEntry,
 )
+from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import (
     create_db_engine,
     create_session_factory,
@@ -269,3 +270,344 @@ def test_init_db_cli_creates_fresh_database(
     assert result.exit_code == 0
     assert "Initialized database at" in result.stdout
     assert (tmp_path / "cli.db").exists()
+
+
+def test_repository_upserts_are_idempotent(tmp_path: Path) -> None:
+    database_url = build_sqlite_url(tmp_path / "repository.db")
+    init_database(database_url)
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    later = now + timedelta(minutes=1)
+
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+
+        repository.upsert_wallet(
+            wallet_address="0xabc",
+            first_seen_at=now,
+            last_seen_at=now,
+            display_name="Alpha",
+        )
+        wallet = repository.upsert_wallet(
+            wallet_address="0xabc",
+            first_seen_at=now,
+            last_seen_at=later,
+            display_name="Alpha Prime",
+            is_flagged=True,
+            flag_status=WalletFlagStatus.FLAGGED.value,
+        )
+
+        repository.upsert_event(
+            event_id="event-1",
+            title="Election night",
+            status="open",
+        )
+        repository.upsert_event(
+            event_id="event-1",
+            title="Election night updated",
+            status="resolved",
+        )
+
+        market = repository.upsert_market(
+            market_id="market-1",
+            event_id="event-1",
+            question="Will candidate X win?",
+            category="politics",
+            status="open",
+            volume=100.0,
+        )
+        repository.upsert_market(
+            market_id="market-1",
+            event_id="event-1",
+            question="Will candidate X win the election?",
+            category="politics",
+            status="closed",
+            volume=150.0,
+        )
+
+        trade = repository.upsert_trade(
+            trade_id="trade-1",
+            wallet_address="0xabc",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            side="buy",
+            price=0.6,
+            size=100.0,
+            notional=60.0,
+            trade_time=now,
+            source=TradeSource.REST.value,
+        )
+        repository.upsert_trade(
+            trade_id="trade-1",
+            wallet_address="0xabc",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            side="buy",
+            price=0.62,
+            size=125.0,
+            notional=77.5,
+            trade_time=now,
+            source=TradeSource.REST.value,
+        )
+
+        repository.upsert_position_snapshot(
+            wallet_address="0xabc",
+            snapshot_time=now,
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            quantity=100.0,
+            current_value=65.0,
+        )
+        position_snapshot = repository.upsert_position_snapshot(
+            wallet_address="0xabc",
+            snapshot_time=now,
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            quantity=125.0,
+            current_value=81.25,
+        )
+
+        repository.upsert_closed_position(
+            wallet_address="0xabc",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=10.0,
+            roi=0.1,
+            opened_at=now,
+            closed_at=now,
+        )
+        closed_position = repository.upsert_closed_position(
+            wallet_address="0xabc",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            quantity=125.0,
+            realized_pnl=12.5,
+            roi=0.15,
+            opened_at=now,
+            closed_at=now,
+        )
+
+        repository.upsert_wallet_feature_snapshot(
+            wallet_address="0xabc",
+            as_of_time=now,
+            resolved_markets_count=10,
+            trades_count=20,
+            composite_score=88.0,
+            confidence_score=0.75,
+        )
+        feature_snapshot = repository.upsert_wallet_feature_snapshot(
+            wallet_address="0xabc",
+            as_of_time=now,
+            resolved_markets_count=12,
+            trades_count=25,
+            composite_score=91.0,
+            confidence_score=0.82,
+        )
+
+        repository.upsert_watchlist_entry(
+            wallet_address="0xabc",
+            added_reason="High signal",
+            added_at=now,
+            priority=100,
+        )
+        watchlist_entry = repository.upsert_watchlist_entry(
+            wallet_address="0xabc",
+            added_reason="Still high signal",
+            added_at=now,
+            watch_status=WatchStatus.ACTIVE.value,
+            priority=10,
+        )
+
+        repository.upsert_alert(
+            wallet_address="0xabc",
+            alert_type=AlertType.POSITION_CHANGED.value,
+            severity=AlertSeverity.INFO.value,
+            market_id="market-1",
+            event_id="event-1",
+            summary="Exposure changed",
+            detected_at=now,
+        )
+        alert = repository.upsert_alert(
+            wallet_address="0xabc",
+            alert_type=AlertType.POSITION_CHANGED.value,
+            severity=AlertSeverity.WARNING.value,
+            market_id="market-1",
+            event_id="event-1",
+            summary="Exposure changed",
+            detected_at=now,
+            is_read=True,
+        )
+
+        repository.upsert_ingestion_run(
+            run_type=IngestionRunType.LEADERBOARD.value,
+            started_at=now,
+            status=IngestionRunStatus.RUNNING.value,
+        )
+        ingestion_run = repository.upsert_ingestion_run(
+            run_type=IngestionRunType.LEADERBOARD.value,
+            started_at=now,
+            status=IngestionRunStatus.SUCCEEDED.value,
+            finished_at=now,
+            records_written=5,
+        )
+
+        assert wallet.display_name == "Alpha Prime"
+        assert wallet.is_flagged is True
+        assert market.status == "closed"
+        assert trade.notional == 77.5
+        assert position_snapshot.quantity == 125.0
+        assert closed_position.roi == 0.15
+        assert feature_snapshot.composite_score == 91.0
+        assert watchlist_entry.priority == 10
+        assert alert.severity == AlertSeverity.WARNING.value
+        assert alert.is_read is True
+        assert ingestion_run.records_written == 5
+
+        assert session.scalar(select(func.count()).select_from(Wallet)) == 1
+        assert session.scalar(select(func.count()).select_from(Event)) == 1
+        assert session.scalar(select(func.count()).select_from(Market)) == 1
+        assert session.scalar(select(func.count()).select_from(Trade)) == 1
+        assert session.scalar(select(func.count()).select_from(PositionSnapshot)) == 1
+        assert session.scalar(select(func.count()).select_from(ClosedPosition)) == 1
+        assert session.scalar(select(func.count()).select_from(WalletFeatureSnapshot)) == 1
+        assert session.scalar(select(func.count()).select_from(WatchlistEntry)) == 1
+        assert session.scalar(select(func.count()).select_from(Alert)) == 1
+        assert session.scalar(select(func.count()).select_from(IngestionRun)) == 1
+
+
+def test_repository_query_helpers_return_reporting_datasets(tmp_path: Path) -> None:
+    database_url = build_sqlite_url(tmp_path / "queries.db")
+    init_database(database_url)
+    session_factory = create_session_factory(database_url)
+    now = datetime.now(UTC)
+    later = now + timedelta(minutes=5)
+
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+
+        repository.upsert_wallet(
+            wallet_address="0xaaa",
+            first_seen_at=now,
+            last_seen_at=later,
+            display_name="Alpha",
+            is_flagged=True,
+            flag_status=WalletFlagStatus.FLAGGED.value,
+        )
+        repository.upsert_wallet(
+            wallet_address="0xbbb",
+            first_seen_at=now,
+            last_seen_at=now,
+            display_name="Bravo",
+            is_flagged=False,
+            flag_status=WalletFlagStatus.CANDIDATE.value,
+        )
+        repository.upsert_event(event_id="event-1", title="Event 1", status="open")
+        repository.upsert_market(
+            market_id="market-1",
+            event_id="event-1",
+            question="Will it happen?",
+            status="open",
+        )
+        repository.upsert_trade(
+            trade_id="trade-a",
+            wallet_address="0xaaa",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="YES",
+            side="buy",
+            price=0.55,
+            size=10.0,
+            notional=5.5,
+            trade_time=now,
+        )
+        repository.upsert_trade(
+            trade_id="trade-b",
+            wallet_address="0xaaa",
+            market_id="market-1",
+            event_id="event-1",
+            outcome="NO",
+            side="sell",
+            price=0.45,
+            size=15.0,
+            notional=6.75,
+            trade_time=later,
+        )
+        repository.upsert_wallet_feature_snapshot(
+            wallet_address="0xaaa",
+            as_of_time=now,
+            resolved_markets_count=8,
+            trades_count=12,
+            composite_score=80.0,
+            confidence_score=0.6,
+        )
+        repository.upsert_wallet_feature_snapshot(
+            wallet_address="0xaaa",
+            as_of_time=later,
+            resolved_markets_count=10,
+            trades_count=15,
+            composite_score=92.0,
+            confidence_score=0.9,
+        )
+        repository.upsert_wallet_feature_snapshot(
+            wallet_address="0xbbb",
+            as_of_time=now,
+            resolved_markets_count=9,
+            trades_count=18,
+            composite_score=87.0,
+            confidence_score=0.7,
+        )
+        repository.upsert_watchlist_entry(
+            wallet_address="0xaaa",
+            added_reason="Flagged",
+            added_at=now,
+            watch_status=WatchStatus.ACTIVE.value,
+            priority=5,
+        )
+        repository.upsert_watchlist_entry(
+            wallet_address="0xbbb",
+            added_reason="Paused",
+            added_at=now,
+            watch_status=WatchStatus.PAUSED.value,
+            priority=50,
+        )
+        repository.upsert_alert(
+            wallet_address="0xaaa",
+            alert_type=AlertType.POSITION_CHANGED.value,
+            severity=AlertSeverity.WARNING.value,
+            summary="Alpha changed exposure",
+            detected_at=later,
+            is_read=False,
+        )
+        repository.upsert_alert(
+            wallet_address="0xbbb",
+            alert_type=AlertType.POSITION_OPENED.value,
+            severity=AlertSeverity.INFO.value,
+            summary="Bravo opened exposure",
+            detected_at=now,
+            is_read=True,
+        )
+
+        flagged_wallets = repository.list_flagged_wallets()
+        latest_snapshot = repository.get_latest_feature_snapshot("0xaaa")
+        wallet_scores = repository.list_wallet_scores()
+        filtered_scores = repository.list_wallet_scores(min_composite_score=90.0, limit=1)
+        wallet_trades = repository.get_trades_for_wallet("0xaaa")
+        active_watchlist = repository.list_active_watchlist_entries()
+        unread_alerts = repository.list_recent_alerts(unread_only=True)
+
+        assert [wallet.wallet_address for wallet in flagged_wallets] == ["0xaaa"]
+        assert latest_snapshot is not None
+        assert latest_snapshot.composite_score == 92.0
+        assert [row.wallet_address for row in wallet_scores] == ["0xaaa", "0xbbb"]
+        assert wallet_scores[0].as_of_time == later
+        assert filtered_scores[0].wallet_address == "0xaaa"
+        assert [trade.trade_id for trade in wallet_trades] == ["trade-a", "trade-b"]
+        assert [entry.wallet_address for entry in active_watchlist] == ["0xaaa"]
+        assert [alert.wallet_address for alert in unread_alerts] == ["0xaaa"]
