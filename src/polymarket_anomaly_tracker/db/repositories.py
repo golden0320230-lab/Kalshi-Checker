@@ -862,6 +862,27 @@ class DatabaseRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_closed_positions_for_wallet(
+        self,
+        wallet_address: str,
+        *,
+        limit: int | None = None,
+    ) -> list[ClosedPosition]:
+        """Return a wallet's closed positions in most-recent-first order."""
+
+        stmt = (
+            select(ClosedPosition)
+            .where(ClosedPosition.wallet_address == wallet_address)
+            .order_by(
+                desc(ClosedPosition.closed_at),
+                ClosedPosition.market_id,
+                ClosedPosition.outcome,
+            )
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return list(self.session.scalars(stmt))
+
     def list_active_watchlist_entries(self) -> list[WatchlistEntry]:
         """Return active watchlist entries ordered by priority."""
 
@@ -911,6 +932,24 @@ class DatabaseRepository:
         if unread_only:
             stmt = stmt.where(Alert.is_read.is_(False))
 
+        return list(self.session.scalars(stmt.limit(limit)))
+
+    def list_recent_alerts_for_wallet(
+        self,
+        wallet_address: str,
+        *,
+        limit: int = 20,
+        unread_only: bool = False,
+    ) -> list[Alert]:
+        """Return recent alerts scoped to one wallet."""
+
+        stmt = (
+            select(Alert)
+            .where(Alert.wallet_address == wallet_address)
+            .order_by(desc(Alert.detected_at), desc(Alert.id))
+        )
+        if unread_only:
+            stmt = stmt.where(Alert.is_read.is_(False))
         return list(self.session.scalars(stmt.limit(limit)))
 
 
