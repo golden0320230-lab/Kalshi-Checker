@@ -9,10 +9,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from alembic import command
+from typer.testing import CliRunner
 
+from polymarket_anomaly_tracker.config import clear_settings_cache
 from polymarket_anomaly_tracker.db.init_db import build_alembic_config, init_database
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import create_session_factory, session_scope
+from polymarket_anomaly_tracker.main import app
 from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
 from polymarket_anomaly_tracker.scoring.explanations import build_explanation_payload
 from polymarket_anomaly_tracker.scoring.normalization import percentile_normalize_series
@@ -21,6 +24,7 @@ ALPHA_WALLET = "0xaaa"
 BETA_WALLET = "0xbbb"
 GAMMA_WALLET = "0xccc"
 DELTA_WALLET = "0xddd"
+runner = CliRunner()
 
 
 def test_percentile_normalize_series_handles_constant_columns() -> None:
@@ -160,6 +164,26 @@ def test_score_and_persist_wallets_requires_issue_10_migration(tmp_path: Path) -
                 score_eligible_min_resolved_markets=3,
                 score_eligible_min_trades=3,
             )
+
+
+def test_score_compute_command_persists_snapshots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'scoring-cli.db'}"
+    init_database(database_url)
+    seed_scoring_test_data(database_url)
+
+    monkeypatch.setenv("PMAT_DATABASE_URL", database_url)
+    clear_settings_cache()
+    try:
+        result = runner.invoke(app, ["score", "compute"])
+    finally:
+        clear_settings_cache()
+
+    assert result.exit_code == 0
+    assert "Computed wallet scores." in result.stdout
+    assert "Wallets scored: 4." in result.stdout
 
 
 def seed_scoring_test_data(database_url: str) -> None:

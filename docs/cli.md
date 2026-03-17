@@ -43,23 +43,20 @@ Enrich seeded wallets with profiles, trades, positions, closed positions, market
 uv run pmat ingest enrich --wallet-batch-size 25
 ```
 
-### Scoring
+### `score compute`
 
-There is no dedicated scoring CLI command yet. Current scoring is run through Python:
+Compute and persist anomaly scores for all wallets with local history.
 
 ```bash
-uv run python - <<'PY'
-from datetime import UTC, datetime
-from polymarket_anomaly_tracker.config import get_settings
-from polymarket_anomaly_tracker.db.session import get_session_factory, session_scope
-from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
+uv run pmat score compute
+```
 
-settings = get_settings()
-session_factory = get_session_factory(settings)
+### `demo run`
 
-with session_scope(session_factory) as session:
-    score_and_persist_wallets(session, as_of_time=datetime.now(UTC))
-PY
+Run the full deterministic offline demo flow on fixture-backed data.
+
+```bash
+uv run pmat demo run
 ```
 
 ### `flag refresh`
@@ -140,7 +137,7 @@ uv run pmat report export \
 uv run pmat init-db
 uv run pmat ingest seed --leaderboard-window all --top-wallets 25
 uv run pmat ingest enrich --wallet-batch-size 25
-# scoring via the Python snippet above
+uv run pmat score compute
 uv run pmat flag refresh
 uv run pmat watch run --max-cycles 1 --interval-seconds 0
 uv run pmat report top-wallets --limit 10
@@ -151,3 +148,4 @@ uv run pmat report top-wallets --limit 10
 - If `report wallet` fails, make sure you pass the wallet address without angle brackets.
 - If scoring fails with a missing `adjusted_score` column, rerun `uv run pmat init-db`.
 - If watch mode produces zero alerts, that is valid when no material position changes occurred between snapshots.
+- `demo run` defaults to `sqlite:///data/demo_fixture.db` and resets that SQLite file unless you pass `--no-reset-db`.
