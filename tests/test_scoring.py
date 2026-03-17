@@ -11,15 +11,26 @@ import pytest
 from alembic import command
 from typer.testing import CliRunner
 
-from polymarket_anomaly_tracker.config import clear_settings_cache
+from polymarket_anomaly_tracker.config import (
+    DEFAULT_COMPOSITE_SCORE_WEIGHTS,
+    EQUAL_WEIGHT_PRESET,
+    TIMING_LIGHT_WEIGHT_PRESET,
+    clear_settings_cache,
+)
 from polymarket_anomaly_tracker.db.init_db import build_alembic_config, init_database
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import create_session_factory, session_scope
+from polymarket_anomaly_tracker.features.dataset import build_wallet_analysis_dataset
 from polymarket_anomaly_tracker.main import app
 from polymarket_anomaly_tracker.scoring.anomaly_score import (
     COMPOSITE_SCORE_WEIGHTS,
     TIMING_VALUE_SCORE_WEIGHTS,
+    compute_anomaly_score_frame,
     score_and_persist_wallets,
+)
+from polymarket_anomaly_tracker.scoring.backtest import (
+    export_backtest_summary,
+    run_walk_forward_backtest,
 )
 from polymarket_anomaly_tracker.scoring.explanations import build_explanation_payload
 from polymarket_anomaly_tracker.scoring.normalization import percentile_normalize_series
@@ -94,6 +105,7 @@ def test_build_explanation_payload_tracks_reason_threshold_edges() -> None:
 def test_timing_value_weights_are_rebalanced_and_isolated() -> None:
     assert sum(TIMING_VALUE_SCORE_WEIGHTS.values()) == pytest.approx(0.24)
     assert sum(COMPOSITE_SCORE_WEIGHTS.values()) == pytest.approx(1.0)
+    assert COMPOSITE_SCORE_WEIGHTS == DEFAULT_COMPOSITE_SCORE_WEIGHTS
 
 
 def test_score_and_persist_wallets_outputs_raw_and_normalized_scores(
@@ -202,6 +214,164 @@ def test_score_compute_command_persists_snapshots(
     assert result.exit_code == 0
     assert "Computed wallet scores." in result.stdout
     assert "Wallets scored: 4." in result.stdout
+
+
+def test_walk_forward_backtest_reports_deterministic_profile_metrics(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'scoring-backtest.db'}"
+    init_database(database_url)
+    seed_scoring_test_data(database_url)
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        result = run_walk_forward_backtest(
+            session,
+            train_days=14,
+            test_days=7,
+            top_n=1,
+            weight_profiles={
+                "configured": DEFAULT_COMPOSITE_SCORE_WEIGHTS,
+                "equal": EQUAL_WEIGHT_PRESET,
+                "timing-light": TIMING_LIGHT_WEIGHT_PRESET,
+            },
+            evaluation_end=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
+            score_eligible_min_resolved_markets=2,
+            score_eligible_min_trades=2,
+            flag_eligible_min_resolved_markets=2,
+            flag_eligible_min_trades=2,
+            flag_eligible_min_confidence_score=0.0,
+        )
+
+    summary_rows = {
+        row["profile_name"]: row for row in result.summary_frame.to_dict(orient="records")
+    }
+
+    assert set(summary_rows) == {"configured", "equal", "timing-light"}
+    assert summary_rows["configured"]["ranked_wallets"] == 2
+    assert summary_rows["configured"]["evaluated_wallets"] == 2
+    assert summary_rows["configured"]["top_n"] == 1
+    assert summary_rows["configured"]["average_future_roi_top_n"] == pytest.approx(0.10)
+    assert summary_rows["configured"]["average_future_pnl_percentile_top_n"] == pytest.approx(1.0)
+    assert summary_rows["configured"]["top_decile_hit_rate"] == pytest.approx(1.0)
+    assert summary_rows["configured"]["baseline_hit_rate"] == pytest.approx(0.5)
+    assert summary_rows["configured"]["hit_rate_lift"] == pytest.approx(0.5)
+    assert summary_rows["configured"]["spearman_future_pnl_correlation"] == pytest.approx(1.0)
+
+    export_paths = export_backtest_summary(
+        result,
+        output_dir=tmp_path / "backtest-exports",
+    )
+    assert export_paths.json_path.is_file()
+    assert export_paths.csv_path.is_file()
+    assert '"profile_name": "configured"' in export_paths.json_path.read_text(encoding="utf-8")
+
+
+def test_score_backtest_command_uses_configured_weights_from_yaml(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'scoring-backtest-cli.db'}"
+    init_database(database_url)
+    seed_scoring_test_data(database_url)
+    output_dir = tmp_path / "backtest-output"
+    custom_weights = {
+        "normalized_value_at_entry_score": 0.04,
+        "normalized_timing_drift_score": 0.05,
+        "normalized_timing_positive_capture_score": 0.03,
+        "normalized_win_rate": 0.23,
+        "normalized_avg_roi": 0.16,
+        "normalized_realized_pnl_percentile": 0.16,
+        "normalized_specialization_score": 0.13,
+        "normalized_conviction_score": 0.11,
+        "normalized_consistency_score": 0.09,
+    }
+    settings_file = tmp_path / "settings.yaml"
+    settings_file.write_text(
+        "\n".join(
+            [
+                f"database_url: {database_url}",
+                "scoring:",
+                "  composite_weights:",
+                *(
+                    f"    {key}: {value}"
+                    for key, value in custom_weights.items()
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PMAT_SETTINGS_FILE", str(settings_file))
+    clear_settings_cache()
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "score",
+                "backtest",
+                "--train-days",
+                "14",
+                "--test-days",
+                "7",
+                "--top-n",
+                "1",
+                "--profiles",
+                "configured",
+                "--output-dir",
+                str(output_dir),
+            ],
+        )
+    finally:
+        clear_settings_cache()
+
+    assert result.exit_code == 0
+    assert "Backtest complete." in result.stdout
+    export_payload = json.loads((output_dir / "score_backtest_summary.json").read_text("utf-8"))
+    assert export_payload["profiles"][0]["profile_name"] == "configured"
+    assert export_payload["profiles"][0]["weights"] == pytest.approx(custom_weights)
+
+
+def test_compute_anomaly_score_frame_accepts_custom_weight_maps(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'scoring-custom-weights.db'}"
+    init_database(database_url)
+    seed_scoring_test_data(database_url)
+    custom_weights = {
+        "normalized_value_at_entry_score": 0.04,
+        "normalized_timing_drift_score": 0.05,
+        "normalized_timing_positive_capture_score": 0.03,
+        "normalized_win_rate": 0.23,
+        "normalized_avg_roi": 0.16,
+        "normalized_realized_pnl_percentile": 0.16,
+        "normalized_specialization_score": 0.13,
+        "normalized_conviction_score": 0.11,
+        "normalized_consistency_score": 0.09,
+    }
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        dataset = build_wallet_analysis_dataset(session)
+        default_frame = compute_anomaly_score_frame(
+            dataset,
+            as_of_time=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
+        )
+        custom_frame = compute_anomaly_score_frame(
+            dataset,
+            as_of_time=datetime(2026, 4, 2, 12, 0, tzinfo=UTC),
+            composite_weights=custom_weights,
+        )
+
+    default_scores = {
+        row["wallet_address"]: row["composite_score"]
+        for row in default_frame.to_dict(orient="records")
+    }
+    custom_scores = {
+        row["wallet_address"]: row["composite_score"]
+        for row in custom_frame.to_dict(orient="records")
+    }
+
+    assert custom_scores[ALPHA_WALLET] != pytest.approx(default_scores[ALPHA_WALLET])
+    assert custom_scores[BETA_WALLET] != pytest.approx(default_scores[BETA_WALLET])
 
 
 def seed_scoring_test_data(database_url: str) -> None:

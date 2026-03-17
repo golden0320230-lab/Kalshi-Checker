@@ -18,6 +18,16 @@ scoring:
   candidate_threshold: 70.0
   flagged_threshold: 85.0
   min_trades: 10
+  composite_weights:
+    normalized_value_at_entry_score: 0.08
+    normalized_timing_drift_score: 0.10
+    normalized_timing_positive_capture_score: 0.06
+    normalized_win_rate: 0.18
+    normalized_avg_roi: 0.14
+    normalized_realized_pnl_percentile: 0.12
+    normalized_specialization_score: 0.12
+    normalized_conviction_score: 0.10
+    normalized_consistency_score: 0.10
 
 alerts:
   min_position_change_usd: 1000.0

@@ -7,7 +7,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, NonNegativeInt, PositiveFloat, PositiveInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -19,6 +27,44 @@ from sqlalchemy.exc import ArgumentError
 
 DEFAULT_ENV_FILE = Path(".env")
 DEFAULT_SETTINGS_FILE = Path("config/settings.yaml")
+SCORE_WEIGHT_COLUMNS = (
+    "normalized_value_at_entry_score",
+    "normalized_timing_drift_score",
+    "normalized_timing_positive_capture_score",
+    "normalized_win_rate",
+    "normalized_avg_roi",
+    "normalized_realized_pnl_percentile",
+    "normalized_specialization_score",
+    "normalized_conviction_score",
+    "normalized_consistency_score",
+)
+DEFAULT_COMPOSITE_SCORE_WEIGHTS = {
+    "normalized_value_at_entry_score": 0.08,
+    "normalized_timing_drift_score": 0.10,
+    "normalized_timing_positive_capture_score": 0.06,
+    "normalized_win_rate": 0.18,
+    "normalized_avg_roi": 0.14,
+    "normalized_realized_pnl_percentile": 0.12,
+    "normalized_specialization_score": 0.12,
+    "normalized_conviction_score": 0.10,
+    "normalized_consistency_score": 0.10,
+}
+EQUAL_WEIGHT_PRESET = {
+    column_name: 1.0 / len(SCORE_WEIGHT_COLUMNS)
+    for column_name in SCORE_WEIGHT_COLUMNS
+}
+TIMING_LIGHT_WEIGHT_PRESET = {
+    "normalized_value_at_entry_score": 0.04,
+    "normalized_timing_drift_score": 0.05,
+    "normalized_timing_positive_capture_score": 0.03,
+    "normalized_win_rate": 0.20,
+    "normalized_avg_roi": 0.16,
+    "normalized_realized_pnl_percentile": 0.13,
+    "normalized_specialization_score": 0.14,
+    "normalized_conviction_score": 0.13,
+    "normalized_consistency_score": 0.12,
+}
+SUPPORTED_WEIGHT_PROFILES = ("configured", "equal", "timing-light")
 
 
 class LeaderboardSettings(BaseModel):
@@ -36,12 +82,67 @@ class WatchlistSettings(BaseModel):
     persistence_days: PositiveInt = 14
 
 
+class CompositeScoreWeights(BaseModel):
+    """Validated normalized-feature weights used in composite scoring."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    normalized_value_at_entry_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_value_at_entry_score"
+    ]
+    normalized_timing_drift_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_timing_drift_score"
+    ]
+    normalized_timing_positive_capture_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_timing_positive_capture_score"
+    ]
+    normalized_win_rate: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_win_rate"
+    ]
+    normalized_avg_roi: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_avg_roi"
+    ]
+    normalized_realized_pnl_percentile: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_realized_pnl_percentile"
+    ]
+    normalized_specialization_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_specialization_score"
+    ]
+    normalized_conviction_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_conviction_score"
+    ]
+    normalized_consistency_score: PositiveFloat = DEFAULT_COMPOSITE_SCORE_WEIGHTS[
+        "normalized_consistency_score"
+    ]
+
+    @model_validator(mode="after")
+    def validate_weight_sum(self) -> CompositeScoreWeights:
+        """Ensure configured weights still form a normalized composite blend."""
+
+        total_weight = sum(self.as_mapping().values())
+        if abs(total_weight - 1.0) > 1e-6:
+            raise ValueError(
+                "Composite score weights must sum to 1.0 within tolerance; "
+                f"got {total_weight:.6f}."
+            )
+        return self
+
+    def as_mapping(self) -> dict[str, float]:
+        """Return the normalized feature weights as a plain dictionary."""
+
+        return {
+            column_name: float(getattr(self, column_name))
+            for column_name in SCORE_WEIGHT_COLUMNS
+        }
+
+
 class ScoringSettings(BaseModel):
     """Configuration for anomaly scoring thresholds."""
 
     candidate_threshold: PositiveFloat = 70.0
     flagged_threshold: PositiveFloat = 85.0
     min_trades: NonNegativeInt = 10
+    composite_weights: CompositeScoreWeights = Field(default_factory=CompositeScoreWeights)
 
 
 class AlertsSettings(BaseModel):
@@ -139,6 +240,16 @@ class Settings(BaseSettings):
         return self
 
 
+def get_weight_profiles(configured_weights: CompositeScoreWeights) -> dict[str, dict[str, float]]:
+    """Return the supported composite-weight profiles for scoring/backtesting."""
+
+    return {
+        "configured": configured_weights.as_mapping(),
+        "equal": dict(EQUAL_WEIGHT_PRESET),
+        "timing-light": dict(TIMING_LIGHT_WEIGHT_PRESET),
+    }
+
+
 def load_settings(
     *,
     env_file: Path | None = DEFAULT_ENV_FILE,
@@ -147,12 +258,16 @@ def load_settings(
     """Load settings with optional overrides for tests or local tooling."""
 
     previous_settings_file = os.environ.get("PMAT_SETTINGS_FILE")
+    effective_settings_file = settings_file
 
     try:
-        if settings_file is None:
+        if previous_settings_file is not None and settings_file == DEFAULT_SETTINGS_FILE:
+            effective_settings_file = Path(previous_settings_file)
+
+        if effective_settings_file is None:
             os.environ.pop("PMAT_SETTINGS_FILE", None)
         else:
-            os.environ["PMAT_SETTINGS_FILE"] = str(settings_file)
+            os.environ["PMAT_SETTINGS_FILE"] = str(effective_settings_file)
 
         settings_factory = cast(Any, Settings)
         return cast(Settings, settings_factory(_env_file=env_file))

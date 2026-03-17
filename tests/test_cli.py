@@ -28,3 +28,11 @@ def test_help_lists_project_scope() -> None:
     assert "report" in result.stdout
     assert "score" in result.stdout
     assert "watch" in result.stdout
+
+
+def test_score_help_lists_backtest_command() -> None:
+    result = runner.invoke(app, ["score", "--help"])
+
+    assert result.exit_code == 0
+    assert "backtest" in result.stdout
+    assert "compute" in result.stdout
