@@ -45,6 +45,9 @@ def test_docs_files_exist_and_cover_required_topics() -> None:
     assert "local-only" in architecture
     assert "score backtest" in best_usage
     assert "ingest market-prices" in best_usage
+    assert "Example Cron Block" in best_usage
+    assert "every 10 minutes" in best_usage
+    assert "launchd" in best_usage
     assert "adjusted_score" in scoring
     assert "wallet_feature_snapshots" in schema
     assert "report export" in cli
