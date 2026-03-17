@@ -27,12 +27,19 @@ class WalletSpecializationFeatures:
     specialization_category: str | None
 
 
+@dataclass(frozen=True)
+class _CategoryAggregate:
+    wins: int
+    markets: int
+
+
 def compute_specialization_feature_frame(
     dataset: WalletAnalysisDataset,
     *,
     min_category_markets: int = 3,
+    min_peer_markets: int = 1,
 ) -> pd.DataFrame:
-    """Compute per-wallet category edge versus the population baseline."""
+    """Compute per-wallet category edge versus a peer baseline excluding self."""
 
     wallet_index = build_wallet_index_frame(dataset)
     if wallet_index.empty:
@@ -43,14 +50,15 @@ def compute_specialization_feature_frame(
         for row in dataset.markets.to_dict(orient="records")
     }
     wallet_category_market_rows = _build_wallet_category_market_rows(dataset, category_lookup)
-    population_baseline = _build_population_category_baseline(wallet_category_market_rows)
+    category_aggregate_totals = _build_category_aggregate_totals(wallet_category_market_rows)
 
     specialization_results = {
         wallet_address: _compute_wallet_specialization(
             wallet_category_market_rows=wallet_category_market_rows,
-            population_baseline=population_baseline,
+            category_aggregate_totals=category_aggregate_totals,
             wallet_address=wallet_address,
             min_category_markets=min_category_markets,
+            min_peer_markets=min_peer_markets,
         )
         for wallet_address in wallet_index["wallet_address"].tolist()
     }
@@ -71,12 +79,14 @@ def compute_specialization_features(
     dataset: WalletAnalysisDataset,
     *,
     min_category_markets: int = 3,
+    min_peer_markets: int = 1,
 ) -> list[WalletSpecializationFeatures]:
     """Compute specialization scores as typed records."""
 
     feature_frame = compute_specialization_feature_frame(
         dataset,
         min_category_markets=min_category_markets,
+        min_peer_markets=min_peer_markets,
     )
     return [
         WalletSpecializationFeatures(
@@ -116,50 +126,60 @@ def _build_wallet_category_market_rows(
     return rows
 
 
-def _build_population_category_baseline(
+def _build_category_aggregate_totals(
     wallet_category_market_rows: list[dict[str, object]],
-) -> dict[str, float]:
-    category_totals: dict[str, tuple[int, int]] = {}
+) -> dict[str, _CategoryAggregate]:
+    category_totals: dict[str, _CategoryAggregate] = {}
     for row in wallet_category_market_rows:
         category = str(row["category"])
-        wins, total = category_totals.get(category, (0, 0))
-        category_totals[category] = (
-            wins + int(bool(row["won_market"])),
-            total + 1,
+        existing_totals = category_totals.get(category, _CategoryAggregate(wins=0, markets=0))
+        category_totals[category] = _CategoryAggregate(
+            wins=existing_totals.wins + int(bool(row["won_market"])),
+            markets=existing_totals.markets + 1,
         )
-
-    return {
-        category: wins / total
-        for category, (wins, total) in category_totals.items()
-        if total > 0
-    }
+    return category_totals
 
 
 def _compute_wallet_specialization(
     *,
     wallet_category_market_rows: list[dict[str, object]],
-    population_baseline: dict[str, float],
+    category_aggregate_totals: dict[str, _CategoryAggregate],
     wallet_address: str,
     min_category_markets: int,
+    min_peer_markets: int,
 ) -> tuple[float | None, str | None]:
-    category_totals: dict[str, tuple[int, int]] = {}
+    wallet_category_totals: dict[str, _CategoryAggregate] = {}
     for row in wallet_category_market_rows:
         if row["wallet_address"] != wallet_address:
             continue
         category = str(row["category"])
-        wins, total = category_totals.get(category, (0, 0))
-        category_totals[category] = (
-            wins + int(bool(row["won_market"])),
-            total + 1,
+        existing_totals = wallet_category_totals.get(
+            category,
+            _CategoryAggregate(wins=0, markets=0),
+        )
+        wallet_category_totals[category] = _CategoryAggregate(
+            wins=existing_totals.wins + int(bool(row["won_market"])),
+            markets=existing_totals.markets + 1,
         )
 
     best_category: str | None = None
     best_edge: float | None = None
-    for category, (wins, total) in category_totals.items():
-        if total < min_category_markets:
+    for category, wallet_totals in wallet_category_totals.items():
+        if wallet_totals.markets < min_category_markets:
             continue
-        category_win_rate = wins / total
-        category_edge = category_win_rate - population_baseline.get(category, category_win_rate)
+
+        category_totals = category_aggregate_totals.get(category)
+        if category_totals is None:
+            continue
+
+        peer_wins = category_totals.wins - wallet_totals.wins
+        peer_markets = category_totals.markets - wallet_totals.markets
+        if peer_markets < min_peer_markets:
+            continue
+
+        category_win_rate = wallet_totals.wins / wallet_totals.markets
+        peer_win_rate = peer_wins / peer_markets
+        category_edge = category_win_rate - peer_win_rate
         if best_edge is None or category_edge > best_edge:
             best_edge = category_edge
             best_category = category

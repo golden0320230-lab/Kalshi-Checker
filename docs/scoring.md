@@ -122,6 +122,18 @@ Interpretation:
 
 This is intended to penalize the failure mode where a wallet has many tiny green weeks but one catastrophic red week.
 
+## Specialization
+
+`specialization_score` is now computed against a leave-one-wallet-out peer baseline.
+
+For each category:
+
+- the wallet's own category win rate is computed from its resolved markets
+- the peer baseline is computed from everyone else in that category
+- the wallet is compared only against peers, not a baseline that includes itself
+
+If removing the wallet leaves no peer markets in that category, specialization returns `None` for that category instead of falling back to the wallet's own win rate.
+
 ## Composite and Adjusted Scores
 
 The system currently computes:

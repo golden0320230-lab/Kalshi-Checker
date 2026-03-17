@@ -39,6 +39,9 @@ COMPACT_FILL_WALLET = "0xcompact"
 CONSTANT_BUCKET_WALLET = "0xconstant"
 SKEWED_CONSISTENCY_WALLET = "0xskewed"
 STEADY_CONSISTENCY_WALLET = "0xsteady"
+DOMINANT_SPECIALIZATION_WALLET = "0xdomspec"
+PEER_SPECIALIZATION_WALLET = "0xpeerspec"
+SOLO_SPECIALIZATION_WALLET = "0xsolospec"
 
 
 def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path) -> None:
@@ -193,7 +196,7 @@ def test_compute_advanced_features_handles_small_samples_conservatively(
 
     alpha_specialization = specialization_rows[ALPHA_WALLET]
     assert alpha_specialization.specialization_category == "politics"
-    assert alpha_specialization.specialization_score == pytest.approx(0.25)
+    assert alpha_specialization.specialization_score == pytest.approx(1.0)
     assert specialization_rows[BETA_WALLET].specialization_score is None
     assert specialization_rows[DELTA_WALLET].specialization_score is None
 
@@ -324,6 +327,29 @@ def test_consistency_penalizes_large_negative_outlier_weeks(
     assert skewed_components.profit_factor_component < 0.02
     assert skewed_components.worst_week_penalty_component < 0.01
     assert skewed_components.consistency_score == pytest.approx(skewed.consistency_score)
+
+
+def test_specialization_uses_leave_one_out_peer_baseline_and_handles_no_peers(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-specialization-peers.db'}"
+    init_database(database_url)
+    seed_specialization_peer_baseline_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    specialization_rows = {
+        feature.wallet_address: feature for feature in compute_specialization_features(dataset)
+    }
+
+    dominant_wallet = specialization_rows[DOMINANT_SPECIALIZATION_WALLET]
+    peer_wallet = specialization_rows[PEER_SPECIALIZATION_WALLET]
+    solo_wallet = specialization_rows[SOLO_SPECIALIZATION_WALLET]
+
+    assert dominant_wallet.specialization_category == "politics"
+    assert dominant_wallet.specialization_score == pytest.approx(1.0)
+    assert peer_wallet.specialization_score is None
+    assert solo_wallet.specialization_score is None
+    assert solo_wallet.specialization_category is None
 
 
 def seed_feature_test_data(database_url: str) -> None:
@@ -607,6 +633,76 @@ def seed_consistency_regression_test_data(database_url: str) -> None:
                 realized_pnl=steady_profit_path[index],
                 roi=None,
                 closed_at=closed_at,
+            )
+
+
+def seed_specialization_peer_baseline_test_data(database_url: str) -> None:
+    """Seed specialization regression data for leave-one-out peer baselines."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        observed_at = datetime(2026, 2, 1, 10, 0, tzinfo=UTC)
+        for wallet_address, display_name in (
+            (DOMINANT_SPECIALIZATION_WALLET, "Dominant"),
+            (PEER_SPECIALIZATION_WALLET, "Peer"),
+            (SOLO_SPECIALIZATION_WALLET, "Solo"),
+        ):
+            repository.upsert_wallet(
+                wallet_address=wallet_address,
+                first_seen_at=observed_at,
+                last_seen_at=observed_at,
+                display_name=display_name,
+            )
+
+        for market_id in ("peer-pol-1", "peer-pol-2", "peer-pol-3", "peer-pol-4", "peer-pol-5"):
+            repository.upsert_market(
+                market_id=market_id,
+                question=f"Politics regression {market_id}",
+                status="closed",
+                category="politics",
+            )
+        for market_id in ("solo-sci-1", "solo-sci-2", "solo-sci-3"):
+            repository.upsert_market(
+                market_id=market_id,
+                question=f"Science regression {market_id}",
+                status="closed",
+                category="science",
+            )
+
+        for index, market_id in enumerate(
+            ("peer-pol-1", "peer-pol-2", "peer-pol-3", "peer-pol-4"),
+            start=1,
+        ):
+            repository.upsert_closed_position(
+                wallet_address=DOMINANT_SPECIALIZATION_WALLET,
+                market_id=market_id,
+                outcome="YES",
+                quantity=100.0,
+                realized_pnl=10.0,
+                roi=0.10,
+                closed_at=datetime(2026, 2, 5 + index, 12, 0, tzinfo=UTC),
+            )
+
+        repository.upsert_closed_position(
+            wallet_address=PEER_SPECIALIZATION_WALLET,
+            market_id="peer-pol-5",
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=-10.0,
+            roi=-0.10,
+            closed_at=datetime(2026, 2, 12, 12, 0, tzinfo=UTC),
+        )
+
+        for index, market_id in enumerate(("solo-sci-1", "solo-sci-2", "solo-sci-3"), start=1):
+            repository.upsert_closed_position(
+                wallet_address=SOLO_SPECIALIZATION_WALLET,
+                market_id=market_id,
+                outcome="YES",
+                quantity=100.0,
+                realized_pnl=15.0,
+                roi=0.15,
+                closed_at=datetime(2026, 3, 1 + index, 12, 0, tzinfo=UTC),
             )
 
 
