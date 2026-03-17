@@ -10,7 +10,10 @@ import pytest
 from polymarket_anomaly_tracker.db.init_db import init_database
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import create_session_factory, session_scope
-from polymarket_anomaly_tracker.features.consistency import compute_consistency_features
+from polymarket_anomaly_tracker.features.consistency import (
+    compute_consistency_components,
+    compute_consistency_features,
+)
 from polymarket_anomaly_tracker.features.conviction import compute_conviction_features
 from polymarket_anomaly_tracker.features.dataset import (
     build_wallet_analysis_dataset,
@@ -34,6 +37,8 @@ SPARSE_TIMING_WALLET = "0xsparse"
 SPLIT_FILL_WALLET = "0xsplit"
 COMPACT_FILL_WALLET = "0xcompact"
 CONSTANT_BUCKET_WALLET = "0xconstant"
+SKEWED_CONSISTENCY_WALLET = "0xskewed"
+STEADY_CONSISTENCY_WALLET = "0xsteady"
 
 
 def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path) -> None:
@@ -199,7 +204,7 @@ def test_compute_advanced_features_handles_small_samples_conservatively(
     assert conviction_rows[DELTA_WALLET].conviction_score is None
 
     assert consistency_rows[ALPHA_WALLET].consistency_score == pytest.approx(1.0)
-    assert consistency_rows[BETA_WALLET].consistency_score == pytest.approx(1 / 3)
+    assert consistency_rows[BETA_WALLET].consistency_score == pytest.approx(29 / 120)
     assert consistency_rows[GAMMA_WALLET].consistency_score is None
     assert consistency_rows[DELTA_WALLET].consistency_score is None
 
@@ -292,6 +297,33 @@ def test_conviction_returns_none_when_bucket_variance_is_constant(
 
     constant_bucket_wallet = conviction_rows[CONSTANT_BUCKET_WALLET]
     assert constant_bucket_wallet.conviction_score is None
+
+
+def test_consistency_penalizes_large_negative_outlier_weeks(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-consistency-regression.db'}"
+    init_database(database_url)
+    seed_consistency_regression_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    consistency_rows = {
+        feature.wallet_address: feature for feature in compute_consistency_features(dataset)
+    }
+
+    skewed = consistency_rows[SKEWED_CONSISTENCY_WALLET]
+    steady = consistency_rows[STEADY_CONSISTENCY_WALLET]
+    assert skewed.consistency_score is not None
+    assert steady.consistency_score is not None
+    assert skewed.consistency_score < 0.40
+    assert steady.consistency_score > skewed.consistency_score
+
+    skewed_components = compute_consistency_components([1.0] * 9 + [-500.0])
+    assert skewed_components is not None
+    assert skewed_components.positive_ratio == pytest.approx(0.9)
+    assert skewed_components.profit_factor_component < 0.02
+    assert skewed_components.worst_week_penalty_component < 0.01
+    assert skewed_components.consistency_score == pytest.approx(skewed.consistency_score)
 
 
 def seed_feature_test_data(database_url: str) -> None:
@@ -527,6 +559,55 @@ def seed_conviction_bucket_test_data(database_url: str) -> None:
         seed_compact_conviction_wallet(repository)
         seed_split_fill_conviction_wallet(repository)
         seed_constant_bucket_conviction_wallet(repository)
+
+
+def seed_consistency_regression_test_data(database_url: str) -> None:
+    """Seed weekly PnL paths for consistency regression scenarios."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        observed_at = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+        for wallet_address, display_name in (
+            (SKEWED_CONSISTENCY_WALLET, "Skewed"),
+            (STEADY_CONSISTENCY_WALLET, "Steady"),
+        ):
+            repository.upsert_wallet(
+                wallet_address=wallet_address,
+                first_seen_at=observed_at,
+                last_seen_at=observed_at,
+                display_name=display_name,
+            )
+
+        weekly_profit_path = [1.0] * 9 + [-500.0]
+        steady_profit_path = [5.0] * 10
+        for index in range(10):
+            market_id = f"consistency-market-{index + 1}"
+            repository.upsert_market(
+                market_id=market_id,
+                question=f"Consistency market {index + 1}",
+                status="closed",
+                category="macro",
+            )
+            closed_at = datetime(2026, 1, 5, 12, 0, tzinfo=UTC) + timedelta(days=index * 7)
+            repository.upsert_closed_position(
+                wallet_address=SKEWED_CONSISTENCY_WALLET,
+                market_id=market_id,
+                outcome="YES",
+                quantity=100.0,
+                realized_pnl=weekly_profit_path[index],
+                roi=None,
+                closed_at=closed_at,
+            )
+            repository.upsert_closed_position(
+                wallet_address=STEADY_CONSISTENCY_WALLET,
+                market_id=market_id,
+                outcome="YES",
+                quantity=100.0,
+                realized_pnl=steady_profit_path[index],
+                roi=None,
+                closed_at=closed_at,
+            )
 
 
 def seed_alpha_wallet(repository: DatabaseRepository) -> None:

@@ -102,6 +102,26 @@ The current formula is a Pearson correlation between bucket `total_abs_notional`
 
 This prevents a wallet from getting a different conviction score just because the same exposure was split into more fills. If there are too few unique buckets or either side has zero variance, conviction returns `None`.
 
+## Consistency
+
+`consistency_score` is weekly and magnitude-aware.
+
+The feature still buckets realized PnL by week, but it no longer reduces consistency to `positive_weeks / total_weeks`.
+
+The current bounded hybrid combines:
+
+- `positive_ratio`
+- `profit_factor_component`
+- `worst_week_penalty_component`
+
+Interpretation:
+
+- more positive weeks improves the score
+- a stronger weekly profit factor improves the score
+- a large worst losing week relative to the mean positive week reduces the score materially
+
+This is intended to penalize the failure mode where a wallet has many tiny green weeks but one catastrophic red week.
+
 ## Composite and Adjusted Scores
 
 The system currently computes:
