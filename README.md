@@ -1,33 +1,204 @@
 # Polymarket Anomaly Tracker
 
-This repository keeps the GitHub name `Kalshi-Checker`, but the project being built here is a local-only Python tool for analyzing public Polymarket data and surfacing anomalous or high-signal wallets for personal research.
+This repository keeps the GitHub name `Kalshi-Checker`, but the software implemented here is a local-only Python tool for analyzing public Polymarket data, scoring unusual wallets, flagging high-signal candidates, tracking flagged wallets over time, and exporting local reports.
 
-## Scope
+The tool is for personal research and signal discovery only.
 
-- Public-data analysis only
-- Local SQLite storage
-- CLI-first workflow
-- No trade execution
-- No wallet signing or account linking
-- No deanonymization features
+It does not:
+- place bets
+- sign wallets
+- connect user accounts
+- automate trading
+- attempt deanonymization
 
-## Status
+## What It Does
 
-Issue 01 bootstrap is in place. The repository currently provides:
+Current `main` supports:
 
-- `uv`-managed Python packaging
-- a minimal `typer` CLI exposed as `pmat`
-- typed application settings with `.env` and YAML support
-- centralized console logging
-- `ruff`, `mypy`, `pytest`, and `pre-commit` configuration
-- a smoke test that validates the CLI entry point
+- initializing a local SQLite database with Alembic migrations
+- loading public Polymarket data for leaderboard wallets
+- enriching wallets with profiles, trades, current positions, closed positions, markets, and events
+- computing explainable anomaly features
+- scoring wallets and persisting score snapshots
+- promoting wallets to `candidate` and `flagged`
+- synchronizing a local watchlist for flagged wallets
+- running finite watch cycles and creating local alerts for material position changes
+- rendering ranked and wallet-level reports
+- exporting reports to CSV and JSON
 
-The ingestion, database, scoring, watchlist, and alerting workflows will be added in later issues.
+## Local-Only Boundary
 
-## Quickstart
+This project is intentionally scoped as a local analysis tool:
+
+- all storage is local SQLite
+- all commands operate on public data
+- no exchange credentials are required
+- no trade execution exists in the codebase
+- no order placement path exists
+- no signing or wallet-management code exists
+
+If you need the precise misuse boundaries, see [docs/threat-model.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/threat-model.md).
+
+## Requirements
+
+- Python 3.11+
+- `uv`
+- SQLite available locally
+
+## Install
 
 ```bash
 uv sync
 uv run pmat --help
+```
+
+Optional developer checks:
+
+```bash
+uv run ruff check .
+uv run mypy src
 uv run pytest
 ```
+
+## Configuration
+
+The app reads configuration from:
+
+1. environment variables
+2. `.env`
+3. `config/settings.yaml`
+
+Example files:
+
+- [.env.example](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/.env.example)
+- [config/settings.example.yaml](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/config/settings.example.yaml)
+
+Minimal local setup:
+
+```bash
+cp .env.example .env
+cp config/settings.example.yaml config/settings.yaml
+```
+
+Default DB:
+
+```text
+sqlite:///data/polymarket_anomaly_tracker.db
+```
+
+## Quickstart
+
+Initialize the local database:
+
+```bash
+uv run pmat init-db
+```
+
+Seed public leaderboard wallets:
+
+```bash
+uv run pmat ingest seed --leaderboard-window all --top-wallets 25
+```
+
+Enrich seeded wallets:
+
+```bash
+uv run pmat ingest enrich --wallet-batch-size 25
+```
+
+Persist scoring snapshots:
+
+```bash
+uv run python - <<'PY'
+from datetime import UTC, datetime
+
+from polymarket_anomaly_tracker.config import get_settings
+from polymarket_anomaly_tracker.db.session import get_session_factory, session_scope
+from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
+
+settings = get_settings()
+session_factory = get_session_factory(settings)
+
+with session_scope(session_factory) as session:
+    score_and_persist_wallets(session, as_of_time=datetime.now(UTC))
+PY
+```
+
+Refresh wallet flags and the watchlist:
+
+```bash
+uv run pmat flag refresh
+```
+
+Run one watch cycle:
+
+```bash
+uv run pmat watch run --max-cycles 1 --interval-seconds 0
+```
+
+Render reports:
+
+```bash
+uv run pmat report top-wallets --limit 10
+uv run pmat report wallet 0xYOUR_WALLET_ADDRESS
+```
+
+Export reports:
+
+```bash
+uv run pmat report export --report top-wallets --format csv --output data/reports/top_wallets.csv
+uv run pmat report export --report wallet --format json --output data/reports/wallet.json --wallet-address 0xYOUR_WALLET_ADDRESS
+```
+
+## Current Workflow
+
+The current recommended order is:
+
+1. `init-db`
+2. `ingest seed`
+3. `ingest enrich`
+4. score via the Python snippet above
+5. `flag refresh`
+6. `watch run`
+7. `report ...`
+
+Scoring is currently available as a Python entry point, not as a dedicated CLI command yet.
+
+## Repository Layout
+
+```text
+Kalshi-Checker/
+├── config/
+├── docs/
+├── migrations/
+├── src/polymarket_anomaly_tracker/
+│   ├── cli/
+│   ├── clients/
+│   ├── db/
+│   ├── features/
+│   ├── ingest/
+│   ├── reporting/
+│   ├── scoring/
+│   └── tracking/
+└── tests/
+```
+
+## Docs
+
+- [docs/architecture.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/architecture.md)
+- [docs/scoring.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/scoring.md)
+- [docs/schema.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/schema.md)
+- [docs/cli.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/cli.md)
+- [docs/threat-model.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/threat-model.md)
+
+## Quality Gates
+
+```bash
+uv run ruff check .
+uv run mypy src
+uv run pytest
+```
+
+## Status
+
+`main` is through Issue 13. The remaining roadmap items are docs polish and the end-to-end fixture demo flow.
