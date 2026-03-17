@@ -86,6 +86,22 @@ True timing uses the first available snapshot at or after `+1h`, `+6h`, and `+24
 
 If a wallet does not have enough trades with forward snapshot matches, both timing-drift metrics return `None`. The scoring layer then treats those missing timing values neutrally instead of assuming a bad score.
 
+## Conviction
+
+`conviction_score` is computed at the bucket level, not per fill.
+
+Each unique `(wallet_address, market_id, outcome)` bucket contributes once after aggregating:
+
+- `total_abs_notional`
+- `trade_count`
+- `net_size` when available
+- `avg_entry_price` when available
+- resolved `realized_pnl`
+
+The current formula is a Pearson correlation between bucket `total_abs_notional` and bucket `realized_pnl`.
+
+This prevents a wallet from getting a different conviction score just because the same exposure was split into more fills. If there are too few unique buckets or either side has zero variance, conviction returns `None`.
+
 ## Composite and Adjusted Scores
 
 The system currently computes:

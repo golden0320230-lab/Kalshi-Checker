@@ -31,6 +31,9 @@ DELTA_WALLET = "0xddd"
 EARLY_WALLET = "0xearly"
 LATE_WALLET = "0xlate"
 SPARSE_TIMING_WALLET = "0xsparse"
+SPLIT_FILL_WALLET = "0xsplit"
+COMPACT_FILL_WALLET = "0xcompact"
+CONSTANT_BUCKET_WALLET = "0xconstant"
 
 
 def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path) -> None:
@@ -256,6 +259,41 @@ def test_true_timing_returns_none_when_matched_trade_threshold_is_not_met(
     assert sparse.timing_positive_capture_score is None
 
 
+def test_conviction_uses_bucket_level_aggregation_so_split_fills_do_not_change_score(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-conviction-buckets.db'}"
+    init_database(database_url)
+    seed_conviction_bucket_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    conviction_rows = {
+        feature.wallet_address: feature for feature in compute_conviction_features(dataset)
+    }
+
+    split_fill = conviction_rows[SPLIT_FILL_WALLET]
+    compact_fill = conviction_rows[COMPACT_FILL_WALLET]
+    assert split_fill.conviction_score is not None
+    assert compact_fill.conviction_score is not None
+    assert split_fill.conviction_score == pytest.approx(compact_fill.conviction_score)
+
+
+def test_conviction_returns_none_when_bucket_variance_is_constant(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-conviction-constant.db'}"
+    init_database(database_url)
+    seed_conviction_bucket_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    conviction_rows = {
+        feature.wallet_address: feature for feature in compute_conviction_features(dataset)
+    }
+
+    constant_bucket_wallet = conviction_rows[CONSTANT_BUCKET_WALLET]
+    assert constant_bucket_wallet.conviction_score is None
+
+
 def seed_feature_test_data(database_url: str) -> None:
     """Seed deterministic wallets, trades, closed positions, and price history."""
 
@@ -459,6 +497,38 @@ def seed_sparse_timing_test_data(database_url: str) -> None:
         )
 
 
+def seed_conviction_bucket_test_data(database_url: str) -> None:
+    """Seed wallets for bucket-level conviction regression tests."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        observed_at = datetime(2026, 3, 9, 10, 0, tzinfo=UTC)
+        for wallet_address, display_name in (
+            (SPLIT_FILL_WALLET, "Split"),
+            (COMPACT_FILL_WALLET, "Compact"),
+            (CONSTANT_BUCKET_WALLET, "Constant"),
+        ):
+            repository.upsert_wallet(
+                wallet_address=wallet_address,
+                first_seen_at=observed_at,
+                last_seen_at=observed_at,
+                display_name=display_name,
+            )
+
+        for market_id in ("bucket-1", "bucket-2", "bucket-3"):
+            repository.upsert_market(
+                market_id=market_id,
+                question=f"Bucket test {market_id}",
+                status="closed",
+                category="macro",
+            )
+
+        seed_compact_conviction_wallet(repository)
+        seed_split_fill_conviction_wallet(repository)
+        seed_constant_bucket_conviction_wallet(repository)
+
+
 def seed_alpha_wallet(repository: DatabaseRepository) -> None:
     """Seed trades and closed positions for the alpha wallet."""
 
@@ -523,6 +593,120 @@ def seed_alpha_wallet(repository: DatabaseRepository) -> None:
         roi=-0.10,
         closed_at=datetime(2026, 3, 31, 11, 0, tzinfo=UTC),
     )
+
+
+def seed_compact_conviction_wallet(repository: DatabaseRepository) -> None:
+    """Seed one trade per bucket for the compact conviction wallet."""
+
+    seed_conviction_bucket_closed_positions(repository, COMPACT_FILL_WALLET)
+    for index, (market_id, outcome, notional, price) in enumerate(
+        (
+            ("bucket-1", "YES", 90.0, 0.45),
+            ("bucket-2", "YES", 45.0, 0.58),
+            ("bucket-3", "NO", 60.0, 0.32),
+        ),
+        start=1,
+    ):
+        repository.upsert_trade(
+            trade_id=f"compact-trade-{index}",
+            wallet_address=COMPACT_FILL_WALLET,
+            market_id=market_id,
+            outcome=outcome,
+            side="buy",
+            price=price,
+            size=100.0,
+            notional=notional,
+            trade_time=datetime(2026, 3, 9, 12 + index, 0, tzinfo=UTC),
+        )
+
+
+def seed_split_fill_conviction_wallet(repository: DatabaseRepository) -> None:
+    """Seed the same conviction buckets with one bucket split into many fills."""
+
+    seed_conviction_bucket_closed_positions(repository, SPLIT_FILL_WALLET)
+    split_notionals = (10.0, 8.0, 12.0, 15.0, 9.0, 14.0, 11.0, 11.0)
+    for index, notional in enumerate(split_notionals, start=1):
+        repository.upsert_trade(
+            trade_id=f"split-trade-{index}",
+            wallet_address=SPLIT_FILL_WALLET,
+            market_id="bucket-1",
+            outcome="YES",
+            side="buy",
+            price=0.45,
+            size=25.0,
+            notional=notional,
+            trade_time=datetime(2026, 3, 9, 12, index, tzinfo=UTC),
+        )
+    for index, (market_id, outcome, notional, price) in enumerate(
+        (
+            ("bucket-2", "YES", 45.0, 0.58),
+            ("bucket-3", "NO", 60.0, 0.32),
+        ),
+        start=1,
+    ):
+        repository.upsert_trade(
+            trade_id=f"split-tail-trade-{index}",
+            wallet_address=SPLIT_FILL_WALLET,
+            market_id=market_id,
+            outcome=outcome,
+            side="buy",
+            price=price,
+            size=100.0,
+            notional=notional,
+            trade_time=datetime(2026, 3, 9, 14 + index, 0, tzinfo=UTC),
+        )
+
+
+def seed_constant_bucket_conviction_wallet(repository: DatabaseRepository) -> None:
+    """Seed a wallet with constant bucket notionals so conviction is undefined."""
+
+    for market_id, realized_pnl in (
+        ("bucket-1", 15.0),
+        ("bucket-2", -5.0),
+        ("bucket-3", 20.0),
+    ):
+        repository.upsert_closed_position(
+            wallet_address=CONSTANT_BUCKET_WALLET,
+            market_id=market_id,
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=realized_pnl,
+            roi=realized_pnl / 100.0,
+            closed_at=datetime(2026, 3, 12, 10, 0, tzinfo=UTC),
+        )
+        repository.upsert_trade(
+            trade_id=f"constant-{market_id}",
+            wallet_address=CONSTANT_BUCKET_WALLET,
+            market_id=market_id,
+            outcome="YES",
+            side="buy",
+            price=0.50,
+            size=100.0,
+            notional=50.0,
+            trade_time=datetime(2026, 3, 10, 10, 0, tzinfo=UTC),
+        )
+
+
+def seed_conviction_bucket_closed_positions(
+    repository: DatabaseRepository,
+    wallet_address: str,
+) -> None:
+    """Seed identical resolved buckets used for the split-fill regression test."""
+
+    for market_id, outcome, realized_pnl, roi in (
+        ("bucket-1", "YES", 30.0, 0.30),
+        ("bucket-2", "YES", -10.0, -0.10),
+        ("bucket-3", "NO", 5.0, 0.05),
+    ):
+        repository.upsert_closed_position(
+            wallet_address=wallet_address,
+            market_id=market_id,
+            outcome=outcome,
+            quantity=100.0,
+            realized_pnl=realized_pnl,
+            roi=roi,
+            closed_at=datetime(2026, 3, 12, 9, 0, tzinfo=UTC),
+        )
 
 
 def seed_beta_wallet(repository: DatabaseRepository) -> None:
