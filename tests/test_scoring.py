@@ -16,7 +16,11 @@ from polymarket_anomaly_tracker.db.init_db import build_alembic_config, init_dat
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.db.session import create_session_factory, session_scope
 from polymarket_anomaly_tracker.main import app
-from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
+from polymarket_anomaly_tracker.scoring.anomaly_score import (
+    COMPOSITE_SCORE_WEIGHTS,
+    TIMING_VALUE_SCORE_WEIGHTS,
+    score_and_persist_wallets,
+)
 from polymarket_anomaly_tracker.scoring.explanations import build_explanation_payload
 from polymarket_anomaly_tracker.scoring.normalization import percentile_normalize_series
 
@@ -50,8 +54,9 @@ def test_build_explanation_payload_tracks_reason_threshold_edges() -> None:
             "adjusted_score": 0.81,
             "composite_score": 0.90,
             "confidence_score": 0.90,
-            "early_entry_edge": 0.41,
-            "timing_score": 0.29,
+            "value_at_entry_score": 0.41,
+            "timing_drift_score": 0.29,
+            "timing_positive_capture_score": 0.18,
             "win_rate": 0.82,
             "avg_roi": 0.18,
             "median_roi": 0.15,
@@ -60,8 +65,9 @@ def test_build_explanation_payload_tracks_reason_threshold_edges() -> None:
             "specialization_category": "politics",
             "conviction_score": 0.77,
             "consistency_score": 0.67,
-            "normalized_early_entry_edge": 0.75,
-            "normalized_timing_score": 0.749,
+            "normalized_value_at_entry_score": 0.75,
+            "normalized_timing_drift_score": 0.82,
+            "normalized_timing_positive_capture_score": 0.749,
             "normalized_win_rate": 0.91,
             "normalized_avg_roi": 0.80,
             "normalized_realized_pnl_percentile": 0.88,
@@ -76,12 +82,18 @@ def test_build_explanation_payload_tracks_reason_threshold_edges() -> None:
         "trades_count": 20,
         "recent_trades_count_90d": 12,
     }
-    assert "normalized_early_entry_edge" in payload["threshold_reason_keys"]
-    assert "normalized_timing_score" not in payload["threshold_reason_keys"]
+    assert "normalized_value_at_entry_score" in payload["threshold_reason_keys"]
+    assert "normalized_timing_positive_capture_score" not in payload["threshold_reason_keys"]
+    assert "normalized_timing_drift_score" in payload["threshold_reason_keys"]
     assert payload["top_reasons"]
     assert {
         detail["message"] for detail in payload["reason_details"]
     } >= {"Unusually strong results in politics markets"}
+
+
+def test_timing_value_weights_are_rebalanced_and_isolated() -> None:
+    assert sum(TIMING_VALUE_SCORE_WEIGHTS.values()) == pytest.approx(0.24)
+    assert sum(COMPOSITE_SCORE_WEIGHTS.values()) == pytest.approx(1.0)
 
 
 def test_score_and_persist_wallets_outputs_raw_and_normalized_scores(
@@ -116,6 +128,12 @@ def test_score_and_persist_wallets_outputs_raw_and_normalized_scores(
         "win_rate",
         "normalized_win_rate",
         "normalized_realized_pnl_percentile",
+        "value_at_entry_score",
+        "timing_drift_score",
+        "timing_positive_capture_score",
+        "normalized_value_at_entry_score",
+        "normalized_timing_drift_score",
+        "normalized_timing_positive_capture_score",
         "adjusted_score",
     } <= set(score_frame.columns)
     assert score_rows[ALPHA_WALLET]["score_eligible"] is True
@@ -150,7 +168,7 @@ def test_score_and_persist_wallets_outputs_raw_and_normalized_scores(
     assert explanation_payload["top_reasons"]
 
 
-def test_score_and_persist_wallets_requires_issue_10_migration(tmp_path: Path) -> None:
+def test_score_and_persist_wallets_requires_current_scoring_migration(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'scoring-pre-issue10.db'}"
     command.upgrade(build_alembic_config(database_url), "20260315_0001")
     seed_scoring_test_data(database_url)

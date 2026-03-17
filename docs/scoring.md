@@ -11,6 +11,7 @@ Scoring uses the wallet analysis dataset assembled from:
 - `wallets`
 - `trades`
 - `closed_positions`
+- `market_price_snapshots`
 
 Additional context such as current positions and alerts is used elsewhere, but the core scoring path is based on historical trade and resolved-position behavior.
 
@@ -31,8 +32,9 @@ These come from [features/pnl.py](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-C
 
 The current advanced features are:
 
-- `early_entry_edge`
-- `timing_score`
+- `value_at_entry_score`
+- `timing_drift_score`
+- `timing_positive_capture_score`
 - `specialization_score`
 - `conviction_score`
 - `consistency_score`
@@ -50,8 +52,9 @@ Raw features are converted to percentile-like normalized columns before they are
 
 Current normalized columns:
 
-- `normalized_early_entry_edge`
-- `normalized_timing_score`
+- `normalized_value_at_entry_score`
+- `normalized_timing_drift_score`
+- `normalized_timing_positive_capture_score`
 - `normalized_win_rate`
 - `normalized_avg_roi`
 - `normalized_realized_pnl_percentile`
@@ -60,6 +63,28 @@ Current normalized columns:
 - `normalized_consistency_score`
 
 If a normalized input is missing, the scoring code uses a neutral contribution rather than forcing it to zero.
+
+## Timing vs Value At Entry
+
+The timing/value layer is now split into two different concepts:
+
+- `value_at_entry_score`
+  - a resolved-outcome proxy
+  - answers: was the wallet's entry price favorable relative to the eventual market outcome
+- `timing_drift_score`
+  - a true timing metric built from forward market snapshots
+  - answers: did price move favorably after the trade
+- `timing_positive_capture_score`
+  - a true timing metric built from forward market snapshots
+  - answers: how much positive post-entry drift the wallet captured without counting adverse drift as positive
+
+True timing uses the first available snapshot at or after `+1h`, `+6h`, and `+24h` from each trade. Trade-level drift is measured on the traded contract side:
+
+- buys are favorable when contract price rises
+- sells are favorable when contract price falls
+- `NO` trades are evaluated against `1 - YES_price`
+
+If a wallet does not have enough trades with forward snapshot matches, both timing-drift metrics return `None`. The scoring layer then treats those missing timing values neutrally instead of assuming a bad score.
 
 ## Composite and Adjusted Scores
 
@@ -70,6 +95,14 @@ The system currently computes:
 - `adjusted_score`
 
 `composite_score` blends the normalized feature columns with fixed weights.
+
+The timing/value block is intentionally lighter than before while it is still being validated:
+
+- `normalized_value_at_entry_score`: `0.08`
+- `normalized_timing_drift_score`: `0.10`
+- `normalized_timing_positive_capture_score`: `0.06`
+
+That keeps combined timing/value weight at `0.24` instead of the earlier `0.40` proxy-heavy allocation.
 
 `confidence_score` reflects sample size and recency support.
 
@@ -117,28 +150,10 @@ Scoring output is persisted into `wallet_feature_snapshots`.
 Important persisted fields:
 
 - raw feature values
+- `value_at_entry_score`
+- `timing_drift_score`
+- `timing_positive_capture_score`
 - `composite_score`
 - `confidence_score`
 - `adjusted_score`
 - `explanations_json`
-
-## Current Limitation
-
-Scoring is currently available through Python service code, not a dedicated CLI command.
-
-The current documented scoring entry point is:
-
-```bash
-uv run python - <<'PY'
-from datetime import UTC, datetime
-from polymarket_anomaly_tracker.config import get_settings
-from polymarket_anomaly_tracker.db.session import get_session_factory, session_scope
-from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
-
-settings = get_settings()
-session_factory = get_session_factory(settings)
-
-with session_scope(session_factory) as session:
-    score_and_persist_wallets(session, as_of_time=datetime.now(UTC))
-PY
-```

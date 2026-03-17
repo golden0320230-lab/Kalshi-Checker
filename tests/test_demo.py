@@ -38,7 +38,7 @@ def test_demo_run_command_executes_full_offline_pipeline(tmp_path: Path) -> None
     assert result.exit_code == 0
     assert "Completed offline fixture demo." in result.stdout
     assert "Flagged: 1." in result.stdout
-    assert "Candidates: 1." in result.stdout
+    assert "Candidates: 0." in result.stdout
     assert "Alerts: 2." in result.stdout
 
     session_factory = create_session_factory(database_url)

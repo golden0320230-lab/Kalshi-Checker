@@ -13,8 +13,9 @@ RAW_FEATURE_KEYS = (
     "avg_roi",
     "median_roi",
     "realized_pnl_total",
-    "early_entry_edge",
-    "timing_score",
+    "value_at_entry_score",
+    "timing_drift_score",
+    "timing_positive_capture_score",
     "specialization_score",
     "specialization_category",
     "conviction_score",
@@ -22,8 +23,9 @@ RAW_FEATURE_KEYS = (
 )
 
 NORMALIZED_FEATURE_KEYS = (
-    "normalized_early_entry_edge",
-    "normalized_timing_score",
+    "normalized_value_at_entry_score",
+    "normalized_timing_drift_score",
+    "normalized_timing_positive_capture_score",
     "normalized_win_rate",
     "normalized_avg_roi",
     "normalized_realized_pnl_percentile",
@@ -33,8 +35,9 @@ NORMALIZED_FEATURE_KEYS = (
 )
 
 REASON_RAW_FIELD_MAP = {
-    "normalized_early_entry_edge": "early_entry_edge",
-    "normalized_timing_score": "timing_score",
+    "normalized_value_at_entry_score": "value_at_entry_score",
+    "normalized_timing_drift_score": "timing_drift_score",
+    "normalized_timing_positive_capture_score": "timing_positive_capture_score",
     "normalized_win_rate": "win_rate",
     "normalized_avg_roi": "avg_roi",
     "normalized_realized_pnl_percentile": "realized_pnl_total",
@@ -131,10 +134,12 @@ def _build_reason_details(
 
 
 def _build_reason_message(normalized_key: str, row: Mapping[str, object]) -> str:
-    if normalized_key == "normalized_early_entry_edge":
-        return "Repeated favorable early entries before price movement"
-    if normalized_key == "normalized_timing_score":
-        return "Entries stayed favorable relative to final market resolution"
+    if normalized_key == "normalized_value_at_entry_score":
+        return "Entries were priced favorably relative to eventual market outcomes"
+    if normalized_key == "normalized_timing_drift_score":
+        return "Prices moved favorably after entry across forward windows"
+    if normalized_key == "normalized_timing_positive_capture_score":
+        return "Captured positive post-entry drift with limited adverse follow-through"
     if normalized_key == "normalized_win_rate":
         return "Resolved-market win rate ranked near the top of this run"
     if normalized_key == "normalized_avg_roi":

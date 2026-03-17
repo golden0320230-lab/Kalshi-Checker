@@ -46,7 +46,7 @@ def test_report_top_wallets_command_renders_ranked_wallets_and_reasons(
     normalized_output = result.stdout.replace("\n", " ")
     assert TOP_WALLET in normalized_output or "Trader Alpha" in normalized_output
     assert SECOND_WALLET in normalized_output or "Trader Beta" in normalized_output
-    assert "Repeated favorable early entries before price movement" in normalized_output
+    assert "Prices moved favorably after entry across forward windows" in normalized_output
 
 
 def test_report_wallet_command_handles_sparse_wallet_without_crashing(
@@ -140,7 +140,7 @@ def test_report_export_creates_csv_and_json_outputs(
     assert json_payload["score_summary"]["recent_trades_count_90d"] == 7
     assert (
         json_payload["score_summary"]["top_reasons"][0]
-        == "Repeated favorable early entries before price movement"
+        == "Prices moved favorably after entry across forward windows"
     )
     assert json_payload["recent_trades"][0]["market_question"] == "Fed Market"
     assert json_payload["recent_alerts"][0]["summary"] == "Opened YES position in Election Market"
@@ -214,18 +214,19 @@ def seed_reporting_test_data(database_url: str) -> None:
             avg_roi=0.33,
             median_roi=0.28,
             realized_pnl_total=850.0,
-            early_entry_edge=0.78,
+            value_at_entry_score=0.78,
             specialization_score=0.63,
             conviction_score=0.71,
             consistency_score=0.69,
-            timing_score=0.75,
+            timing_drift_score=0.75,
+            timing_positive_capture_score=0.61,
             composite_score=0.86,
             confidence_score=0.74,
             adjusted_score=0.91,
             explanations_json=json.dumps(
                 build_explanation_payload(
                     top_reasons=[
-                        "Repeated favorable early entries before price movement",
+                        "Prices moved favorably after entry across forward windows",
                         "Resolved-market win rate ranked near the top of this run",
                     ],
                     recent_trades_count_90d=7,
@@ -242,11 +243,12 @@ def seed_reporting_test_data(database_url: str) -> None:
             avg_roi=0.22,
             median_roi=0.18,
             realized_pnl_total=420.0,
-            early_entry_edge=0.54,
+            value_at_entry_score=0.54,
             specialization_score=0.45,
             conviction_score=0.49,
             consistency_score=0.52,
-            timing_score=0.55,
+            timing_drift_score=0.55,
+            timing_positive_capture_score=0.38,
             composite_score=0.72,
             confidence_score=0.65,
             adjusted_score=0.76,
@@ -336,7 +338,7 @@ def build_explanation_payload(
 
     return {
         "top_reasons": top_reasons,
-        "threshold_reason_keys": ["normalized_early_entry_edge"],
+        "threshold_reason_keys": ["normalized_timing_drift_score"],
         "sample_size": {
             "resolved_markets_count": 12,
             "trades_count": 40,
@@ -346,20 +348,22 @@ def build_explanation_payload(
             "avg_roi": 0.33,
             "consistency_score": 0.69,
             "conviction_score": 0.71,
-            "early_entry_edge": 0.78,
+            "value_at_entry_score": 0.78,
             "realized_pnl_total": 850.0,
             "specialization_score": 0.63,
-            "timing_score": 0.75,
+            "timing_drift_score": 0.75,
+            "timing_positive_capture_score": 0.61,
             "win_rate": 0.82,
         },
         "normalized_features": {
             "normalized_avg_roi": 0.81,
             "normalized_consistency_score": 0.74,
             "normalized_conviction_score": 0.78,
-            "normalized_early_entry_edge": 0.92,
+            "normalized_value_at_entry_score": 0.72,
             "normalized_realized_pnl_percentile": 0.85,
             "normalized_specialization_score": 0.72,
-            "normalized_timing_score": 0.80,
+            "normalized_timing_drift_score": 0.92,
+            "normalized_timing_positive_capture_score": 0.80,
             "normalized_win_rate": 0.88,
         },
     }

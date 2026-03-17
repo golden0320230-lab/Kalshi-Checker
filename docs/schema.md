@@ -145,15 +145,18 @@ Important fields:
 - `avg_roi`
 - `median_roi`
 - `realized_pnl_total`
-- `early_entry_edge`
+- `value_at_entry_score`
 - `specialization_score`
 - `conviction_score`
 - `consistency_score`
-- `timing_score`
+- `timing_drift_score`
+- `timing_positive_capture_score`
 - `composite_score`
 - `confidence_score`
 - `adjusted_score`
 - `explanations_json`
+
+Legacy columns `early_entry_edge` and `timing_score` may still exist on older rows, but current scoring semantics use the value-at-entry and true timing-drift fields above.
 
 ### `watchlist`
 

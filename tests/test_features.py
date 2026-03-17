@@ -1,8 +1,8 @@
-"""Tests for wallet dataset assembly and core PnL features."""
+"""Tests for wallet dataset assembly and feature computation."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,6 +28,10 @@ BETA_WALLET = "0xbbb"
 GAMMA_WALLET = "0xccc"
 DELTA_WALLET = "0xddd"
 
+EARLY_WALLET = "0xearly"
+LATE_WALLET = "0xlate"
+SPARSE_TIMING_WALLET = "0xsparse"
+
 
 def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path) -> None:
     database_url = f"sqlite:///{tmp_path / 'features.db'}"
@@ -48,8 +52,16 @@ def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path)
     ]
     assert len(dataset.trades) == 7
     assert len(dataset.closed_positions) == 8
-    assert len(dataset.price_snapshots) == 3
-    assert set(dataset.price_snapshots["market_id"]) == {"market-1", "market-3", "market-8"}
+    assert len(dataset.price_snapshots) == 21
+    assert set(dataset.price_snapshots["market_id"]) == {
+        "market-1",
+        "market-2",
+        "market-3",
+        "market-4",
+        "market-6",
+        "market-7",
+        "market-8",
+    }
     assert list(feature_frame["wallet_address"]) == [
         ALPHA_WALLET,
         BETA_WALLET,
@@ -115,7 +127,12 @@ def test_build_wallet_analysis_dataset_filters_wallets_and_handles_sparse_data(
     assert list(dataset.wallets["wallet_address"]) == [ALPHA_WALLET, DELTA_WALLET]
     assert set(dataset.trades["wallet_address"]) == {ALPHA_WALLET}
     assert set(dataset.closed_positions["wallet_address"]) == {ALPHA_WALLET, DELTA_WALLET}
-    assert set(dataset.price_snapshots["market_id"]) == {"market-1"}
+    assert set(dataset.price_snapshots["market_id"]) == {
+        "market-1",
+        "market-2",
+        "market-6",
+        "market-7",
+    }
     assert set(feature_rows) == {ALPHA_WALLET, DELTA_WALLET}
     assert feature_rows[DELTA_WALLET].avg_roi is None
     assert feature_rows[DELTA_WALLET].median_roi is None
@@ -143,12 +160,28 @@ def test_compute_advanced_features_handles_small_samples_conservatively(
     }
 
     alpha_timing = timing_rows[ALPHA_WALLET]
-    assert alpha_timing.early_entry_edge == pytest.approx(193 / 420)
-    assert alpha_timing.timing_score == pytest.approx(221 / 420)
+    assert alpha_timing.value_at_entry_score == pytest.approx(193 / 420)
+    assert alpha_timing.timing_drift_score is not None
+    assert alpha_timing.timing_positive_capture_score is not None
+    assert alpha_timing.timing_drift_score > 0.10
+    assert alpha_timing.timing_positive_capture_score > 0.10
 
     beta_timing = timing_rows[BETA_WALLET]
-    assert beta_timing.early_entry_edge == pytest.approx(-0.2)
-    assert beta_timing.timing_score == pytest.approx(77 / 340)
+    assert beta_timing.value_at_entry_score == pytest.approx(-0.2)
+    assert beta_timing.timing_drift_score is not None
+    assert beta_timing.timing_positive_capture_score is not None
+    assert beta_timing.timing_drift_score < alpha_timing.timing_drift_score
+    assert beta_timing.timing_positive_capture_score < alpha_timing.timing_positive_capture_score
+
+    gamma_timing = timing_rows[GAMMA_WALLET]
+    assert gamma_timing.value_at_entry_score is None
+    assert gamma_timing.timing_drift_score is None
+    assert gamma_timing.timing_positive_capture_score is None
+
+    delta_timing = timing_rows[DELTA_WALLET]
+    assert delta_timing.value_at_entry_score is None
+    assert delta_timing.timing_drift_score is None
+    assert delta_timing.timing_positive_capture_score is None
 
     alpha_specialization = specialization_rows[ALPHA_WALLET]
     assert alpha_specialization.specialization_category == "politics"
@@ -168,8 +201,63 @@ def test_compute_advanced_features_handles_small_samples_conservatively(
     assert consistency_rows[DELTA_WALLET].consistency_score is None
 
 
+def test_true_timing_prefers_early_entry_over_late_entry_even_when_resolution_is_bad(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-true-timing.db'}"
+    init_database(database_url)
+    seed_true_timing_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    timing_rows = {
+        feature.wallet_address: feature
+        for feature in compute_timing_features(
+            dataset,
+            min_value_trades=1,
+            min_matched_trades=1,
+        )
+    }
+
+    early = timing_rows[EARLY_WALLET]
+    late = timing_rows[LATE_WALLET]
+
+    assert early.value_at_entry_score is not None
+    assert late.value_at_entry_score is not None
+    assert early.value_at_entry_score < 0
+    assert late.value_at_entry_score < 0
+    assert early.timing_drift_score is not None
+    assert late.timing_drift_score is not None
+    assert early.timing_positive_capture_score is not None
+    assert late.timing_positive_capture_score is not None
+    assert early.timing_drift_score > late.timing_drift_score
+    assert early.timing_positive_capture_score > late.timing_positive_capture_score
+
+
+def test_true_timing_returns_none_when_matched_trade_threshold_is_not_met(
+    tmp_path: Path,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'features-sparse-timing.db'}"
+    init_database(database_url)
+    seed_sparse_timing_test_data(database_url)
+
+    dataset = load_wallet_analysis_dataset(database_url)
+    timing_rows = {
+        feature.wallet_address: feature
+        for feature in compute_timing_features(
+            dataset,
+            min_value_trades=1,
+            min_matched_trades=2,
+        )
+    }
+
+    sparse = timing_rows[SPARSE_TIMING_WALLET]
+    assert sparse.value_at_entry_score == pytest.approx(0.65)
+    assert sparse.timing_drift_score is None
+    assert sparse.timing_positive_capture_score is None
+
+
 def seed_feature_test_data(database_url: str) -> None:
-    """Seed deterministic wallets, trades, and closed positions for feature tests."""
+    """Seed deterministic wallets, trades, closed positions, and price history."""
 
     session_factory = create_session_factory(database_url)
     with session_scope(session_factory) as session:
@@ -206,26 +294,169 @@ def seed_feature_test_data(database_url: str) -> None:
                 status="closed",
                 category=category,
             )
-        for market_id, snapshot_time, best_bid, best_ask, last_price in (
-            ("market-1", observed_at, 0.41, 0.45, 0.44),
-            ("market-3", observed_at, 0.52, 0.56, 0.54),
-            ("market-8", observed_at, 0.73, 0.77, 0.75),
-        ):
-            repository.upsert_market_price_snapshot(
-                market_id=market_id,
-                snapshot_time=snapshot_time,
-                source="fixture",
-                best_bid=best_bid,
-                best_ask=best_ask,
-                mid_price=(best_bid + best_ask) / 2.0,
-                last_price=last_price,
-                volume=1000.0,
-                liquidity=500.0,
-            )
+
+        for market_id, snapshot_rows in FEATURE_PRICE_SNAPSHOTS.items():
+            for snapshot_time, best_bid, best_ask, last_price in snapshot_rows:
+                repository.upsert_market_price_snapshot(
+                    market_id=market_id,
+                    snapshot_time=snapshot_time,
+                    source="fixture",
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    mid_price=(best_bid + best_ask) / 2.0,
+                    last_price=last_price,
+                    volume=1000.0,
+                    liquidity=500.0,
+                )
 
         seed_alpha_wallet(repository)
         seed_beta_wallet(repository)
         seed_delta_wallet(repository)
+
+
+def seed_true_timing_test_data(database_url: str) -> None:
+    """Seed one favorable early trade path and one late follow trade path."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        observed_at = datetime(2026, 3, 1, 11, 0, tzinfo=UTC)
+        for wallet_address, display_name in (
+            (EARLY_WALLET, "Early"),
+            (LATE_WALLET, "Late"),
+        ):
+            repository.upsert_wallet(
+                wallet_address=wallet_address,
+                first_seen_at=observed_at,
+                last_seen_at=observed_at,
+                display_name=display_name,
+            )
+
+        repository.upsert_market(
+            market_id="market-timing",
+            question="Timing test market",
+            status="closed",
+            category="politics",
+        )
+
+        early_trade_time = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+        late_trade_time = datetime(2026, 3, 1, 18, 0, tzinfo=UTC)
+        for index, (snapshot_time, mid_price) in enumerate(
+            (
+                (early_trade_time + timedelta(hours=1), 0.52),
+                (early_trade_time + timedelta(hours=6), 0.67),
+                (early_trade_time + timedelta(hours=7), 0.65),
+                (early_trade_time + timedelta(hours=12, minutes=30), 0.60),
+                (early_trade_time + timedelta(hours=24, minutes=30), 0.72),
+                (early_trade_time + timedelta(hours=31), 0.55),
+            ),
+            start=1,
+        ):
+            repository.upsert_market_price_snapshot(
+                market_id="market-timing",
+                snapshot_time=snapshot_time,
+                source=f"fixture-{index}",
+                best_bid=mid_price - 0.02,
+                best_ask=mid_price + 0.02,
+                mid_price=mid_price,
+                last_price=mid_price,
+                volume=500.0,
+                liquidity=250.0,
+            )
+
+        repository.upsert_trade(
+            trade_id="early-trade",
+            wallet_address=EARLY_WALLET,
+            market_id="market-timing",
+            outcome="YES",
+            side="buy",
+            price=0.40,
+            size=100.0,
+            notional=40.0,
+            trade_time=early_trade_time,
+        )
+        repository.upsert_trade(
+            trade_id="late-trade",
+            wallet_address=LATE_WALLET,
+            market_id="market-timing",
+            outcome="YES",
+            side="buy",
+            price=0.68,
+            size=100.0,
+            notional=68.0,
+            trade_time=late_trade_time,
+        )
+        repository.upsert_closed_position(
+            wallet_address=EARLY_WALLET,
+            market_id="market-timing",
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=-10.0,
+            roi=-0.10,
+            closed_at=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+        )
+        repository.upsert_closed_position(
+            wallet_address=LATE_WALLET,
+            market_id="market-timing",
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=-8.0,
+            roi=-0.08,
+            closed_at=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+        )
+
+
+def seed_sparse_timing_test_data(database_url: str) -> None:
+    """Seed a wallet with only one matched forward trade."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        observed_at = datetime(2026, 3, 5, 9, 0, tzinfo=UTC)
+        repository.upsert_wallet(
+            wallet_address=SPARSE_TIMING_WALLET,
+            first_seen_at=observed_at,
+            last_seen_at=observed_at,
+            display_name="Sparse",
+        )
+        repository.upsert_market(
+            market_id="market-sparse",
+            question="Sparse timing market",
+            status="closed",
+            category="crypto",
+        )
+        trade_time = datetime(2026, 3, 5, 10, 0, tzinfo=UTC)
+        repository.upsert_trade(
+            trade_id="sparse-trade",
+            wallet_address=SPARSE_TIMING_WALLET,
+            market_id="market-sparse",
+            outcome="YES",
+            side="buy",
+            price=0.35,
+            size=100.0,
+            notional=35.0,
+            trade_time=trade_time,
+        )
+        repository.upsert_closed_position(
+            wallet_address=SPARSE_TIMING_WALLET,
+            market_id="market-sparse",
+            outcome="YES",
+            quantity=100.0,
+            realized_pnl=15.0,
+            roi=0.15,
+            closed_at=datetime(2026, 3, 7, 10, 0, tzinfo=UTC),
+        )
+        repository.upsert_market_price_snapshot(
+            market_id="market-sparse",
+            snapshot_time=trade_time + timedelta(hours=1),
+            source="fixture",
+            best_bid=0.43,
+            best_ask=0.47,
+            mid_price=0.45,
+            last_price=0.45,
+            volume=250.0,
+            liquidity=125.0,
+        )
 
 
 def seed_alpha_wallet(repository: DatabaseRepository) -> None:
@@ -302,7 +533,13 @@ def seed_beta_wallet(repository: DatabaseRepository) -> None:
         ("market-4", "NO", 0.30, 110.0, datetime(2026, 3, 23, 14, 0, tzinfo=UTC)),
         ("market-8", "YES", 0.60, 90.0, datetime(2026, 3, 30, 14, 0, tzinfo=UTC)),
     )
-    for index, (market_id, outcome, price, notional, trade_time) in enumerate(beta_trades, start=1):
+    for index, (
+        market_id,
+        outcome,
+        price,
+        notional,
+        trade_time,
+    ) in enumerate(beta_trades, start=1):
         repository.upsert_trade(
             trade_id=f"beta-trade-{index}",
             wallet_address=BETA_WALLET,
@@ -310,7 +547,7 @@ def seed_beta_wallet(repository: DatabaseRepository) -> None:
             outcome=outcome,
             side="buy",
             price=price,
-            size=80.0,
+            size=100.0,
             notional=notional,
             trade_time=trade_time,
         )
@@ -319,7 +556,7 @@ def seed_beta_wallet(repository: DatabaseRepository) -> None:
         wallet_address=BETA_WALLET,
         market_id="market-3",
         outcome="NO",
-        quantity=80.0,
+        quantity=100.0,
         realized_pnl=-20.0,
         roi=-0.20,
         closed_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
@@ -328,7 +565,7 @@ def seed_beta_wallet(repository: DatabaseRepository) -> None:
         wallet_address=BETA_WALLET,
         market_id="market-4",
         outcome="NO",
-        quantity=80.0,
+        quantity=100.0,
         realized_pnl=5.0,
         roi=0.05,
         closed_at=datetime(2026, 3, 25, 13, 0, tzinfo=UTC),
@@ -351,8 +588,47 @@ def seed_delta_wallet(repository: DatabaseRepository) -> None:
         wallet_address=DELTA_WALLET,
         market_id="market-5",
         outcome="YES",
-        quantity=20.0,
+        quantity=50.0,
         realized_pnl=5.0,
         roi=None,
         closed_at=datetime(2026, 3, 19, 8, 0, tzinfo=UTC),
     )
+
+
+FEATURE_PRICE_SNAPSHOTS = {
+    "market-1": (
+        (datetime(2026, 3, 16, 14, 0, tzinfo=UTC), 0.50, 0.54, 0.53),
+        (datetime(2026, 3, 16, 19, 5, tzinfo=UTC), 0.61, 0.65, 0.64),
+        (datetime(2026, 3, 17, 13, 30, tzinfo=UTC), 0.70, 0.74, 0.73),
+    ),
+    "market-2": (
+        (datetime(2026, 3, 23, 14, 5, tzinfo=UTC), 0.60, 0.64, 0.63),
+        (datetime(2026, 3, 23, 19, 10, tzinfo=UTC), 0.66, 0.70, 0.69),
+        (datetime(2026, 3, 24, 13, 15, tzinfo=UTC), 0.71, 0.75, 0.74),
+    ),
+    "market-3": (
+        (datetime(2026, 3, 16, 15, 5, tzinfo=UTC), 0.48, 0.52, 0.51),
+        (datetime(2026, 3, 16, 20, 10, tzinfo=UTC), 0.56, 0.60, 0.59),
+        (datetime(2026, 3, 17, 14, 20, tzinfo=UTC), 0.60, 0.64, 0.63),
+    ),
+    "market-4": (
+        (datetime(2026, 3, 23, 15, 5, tzinfo=UTC), 0.66, 0.70, 0.69),
+        (datetime(2026, 3, 23, 20, 10, tzinfo=UTC), 0.61, 0.65, 0.64),
+        (datetime(2026, 3, 24, 14, 15, tzinfo=UTC), 0.58, 0.62, 0.61),
+    ),
+    "market-6": (
+        (datetime(2026, 3, 30, 14, 5, tzinfo=UTC), 0.39, 0.43, 0.42),
+        (datetime(2026, 3, 30, 19, 5, tzinfo=UTC), 0.48, 0.52, 0.51),
+        (datetime(2026, 3, 31, 13, 15, tzinfo=UTC), 0.56, 0.60, 0.59),
+    ),
+    "market-7": (
+        (datetime(2026, 3, 30, 15, 5, tzinfo=UTC), 0.16, 0.20, 0.19),
+        (datetime(2026, 3, 30, 20, 5, tzinfo=UTC), 0.12, 0.16, 0.15),
+        (datetime(2026, 3, 31, 14, 15, tzinfo=UTC), 0.08, 0.12, 0.10),
+    ),
+    "market-8": (
+        (datetime(2026, 3, 30, 15, 5, tzinfo=UTC), 0.53, 0.57, 0.56),
+        (datetime(2026, 3, 30, 20, 5, tzinfo=UTC), 0.46, 0.50, 0.49),
+        (datetime(2026, 3, 31, 14, 15, tzinfo=UTC), 0.33, 0.37, 0.36),
+    ),
+}
