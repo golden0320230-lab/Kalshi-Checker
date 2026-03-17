@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -12,6 +12,10 @@ import pandas as pd
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
+from polymarket_anomaly_tracker.config import (
+    DEFAULT_COMPOSITE_SCORE_WEIGHTS,
+    SCORE_WEIGHT_COLUMNS,
+)
 from polymarket_anomaly_tracker.db.repositories import DatabaseRepository
 from polymarket_anomaly_tracker.features.base import WalletAnalysisDataset
 from polymarket_anomaly_tracker.features.consistency import compute_consistency_features
@@ -47,15 +51,7 @@ RAW_SCORE_COLUMNS = (
 )
 
 NORMALIZED_SCORE_COLUMNS = (
-    "normalized_value_at_entry_score",
-    "normalized_timing_drift_score",
-    "normalized_timing_positive_capture_score",
-    "normalized_win_rate",
-    "normalized_avg_roi",
-    "normalized_realized_pnl_percentile",
-    "normalized_specialization_score",
-    "normalized_conviction_score",
-    "normalized_consistency_score",
+    *SCORE_WEIGHT_COLUMNS,
 )
 
 SCORING_FRAME_COLUMNS = RAW_SCORE_COLUMNS + NORMALIZED_SCORE_COLUMNS + (
@@ -79,27 +75,21 @@ NORMALIZED_COLUMN_MAPPING = {
 }
 
 TIMING_VALUE_SCORE_WEIGHTS = {
-    "normalized_value_at_entry_score": 0.08,
-    "normalized_timing_drift_score": 0.10,
-    "normalized_timing_positive_capture_score": 0.06,
+    column_name: DEFAULT_COMPOSITE_SCORE_WEIGHTS[column_name]
+    for column_name in (
+        "normalized_value_at_entry_score",
+        "normalized_timing_drift_score",
+        "normalized_timing_positive_capture_score",
+    )
 }
-
-PERFORMANCE_SCORE_WEIGHTS = {
-    "normalized_win_rate": 0.18,
-    "normalized_avg_roi": 0.14,
-    "normalized_realized_pnl_percentile": 0.12,
-    "normalized_specialization_score": 0.12,
-    "normalized_conviction_score": 0.10,
-    "normalized_consistency_score": 0.10,
-}
-
-COMPOSITE_SCORE_WEIGHTS = TIMING_VALUE_SCORE_WEIGHTS | PERFORMANCE_SCORE_WEIGHTS
+COMPOSITE_SCORE_WEIGHTS = dict(DEFAULT_COMPOSITE_SCORE_WEIGHTS)
 
 
 def compute_anomaly_score_frame(
     dataset: WalletAnalysisDataset,
     *,
     as_of_time: datetime | None = None,
+    composite_weights: Mapping[str, float] | None = None,
     score_eligible_min_resolved_markets: int = 5,
     score_eligible_min_trades: int = 10,
     flag_eligible_min_resolved_markets: int = 8,
@@ -109,6 +99,7 @@ def compute_anomaly_score_frame(
     """Compute raw features, normalized features, and composite anomaly scores."""
 
     effective_as_of_time = _resolve_as_of_time(dataset, explicit_as_of_time=as_of_time)
+    resolved_composite_weights = _resolve_composite_weights(composite_weights)
     rows = _build_raw_score_rows(dataset, as_of_time=effective_as_of_time)
     if not rows:
         return pd.DataFrame(columns=list(SCORING_FRAME_COLUMNS))
@@ -144,7 +135,7 @@ def compute_anomaly_score_frame(
         for row in row_dicts
     ]
     score_frame["composite_score"] = [
-        _compute_composite_score(row)
+        _compute_composite_score(row, composite_weights=resolved_composite_weights)
         for row in cast(list[dict[str, object]], score_frame.to_dict(orient="records"))
     ]
     row_dicts = cast(list[dict[str, object]], score_frame.to_dict(orient="records"))
@@ -169,6 +160,7 @@ def score_and_persist_wallets(
     *,
     as_of_time: datetime | None = None,
     wallet_addresses: Sequence[str] | None = None,
+    composite_weights: Mapping[str, float] | None = None,
     score_eligible_min_resolved_markets: int = 5,
     score_eligible_min_trades: int = 10,
     flag_eligible_min_resolved_markets: int = 8,
@@ -181,6 +173,7 @@ def score_and_persist_wallets(
     score_frame = compute_anomaly_score_frame(
         dataset,
         as_of_time=as_of_time,
+        composite_weights=composite_weights,
         score_eligible_min_resolved_markets=score_eligible_min_resolved_markets,
         score_eligible_min_trades=score_eligible_min_trades,
         flag_eligible_min_resolved_markets=flag_eligible_min_resolved_markets,
@@ -373,11 +366,27 @@ def _is_flag_eligible(
     )
 
 
-def _compute_composite_score(row: dict[str, object]) -> float:
+def _compute_composite_score(
+    row: dict[str, object],
+    *,
+    composite_weights: Mapping[str, float],
+) -> float:
     composite_score = 0.0
-    for column_name, weight in COMPOSITE_SCORE_WEIGHTS.items():
+    for column_name, weight in composite_weights.items():
         composite_score += weight * _coalesce_normalized_value(row[column_name])
     return clamp_float(composite_score)
+
+
+def _resolve_composite_weights(
+    composite_weights: Mapping[str, float] | None,
+) -> dict[str, float]:
+    if composite_weights is None:
+        return dict(DEFAULT_COMPOSITE_SCORE_WEIGHTS)
+
+    return {
+        column_name: float(composite_weights[column_name])
+        for column_name in SCORE_WEIGHT_COLUMNS
+    }
 
 
 def _compute_adjusted_score(row: dict[str, object]) -> float:

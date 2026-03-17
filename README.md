@@ -20,6 +20,8 @@ Current `main` supports:
 - enriching wallets with profiles, trades, current positions, closed positions, markets, and events
 - computing explainable anomaly features
 - scoring wallets and persisting score snapshots with `pmat score compute`
+- overriding composite score weights through local configuration
+- running walk-forward validation with `pmat score backtest`
 - promoting wallets to `candidate` and `flagged`
 - synchronizing a local watchlist for flagged wallets
 - running finite watch cycles and creating local alerts for material position changes
@@ -87,6 +89,9 @@ Default DB:
 sqlite:///data/polymarket_anomaly_tracker.db
 ```
 
+Composite score weights live under `scoring.composite_weights` in `config/settings.yaml`.
+They must cover every normalized feature column and sum to `1.0`. The built-in defaults remain the active scoring profile unless you override them locally.
+
 ## Quickstart
 
 Initialize the local database:
@@ -112,6 +117,18 @@ Persist scoring snapshots:
 ```bash
 uv run pmat score compute
 ```
+
+Run walk-forward validation against the local dataset:
+
+```bash
+uv run pmat score backtest --train-days 90 --test-days 30 --top-n 25
+```
+
+This writes JSON and CSV summaries under `data/backtests/` by default and compares:
+
+- your configured weight profile
+- equal weights
+- a timing-light ablation profile
 
 Refresh wallet flags and the watchlist:
 
@@ -153,9 +170,26 @@ The current recommended order is:
 2. `ingest seed`
 3. `ingest enrich`
 4. `score compute`
-5. `flag refresh`
-6. `watch run`
-7. `report ...`
+5. `score backtest`
+6. `flag refresh`
+7. `watch run`
+8. `report ...`
+
+## Weight Validation
+
+In this project, “validated” means the scoring weights can be replayed against a fixed walk-forward split on local historical data:
+
+- train on the prior `N` days
+- rank wallets using only history before the cutoff
+- evaluate future realized outcomes over the next window
+- compare configured weights against simple ablation baselines
+
+The backtest currently reports:
+
+- average future ROI of the top-ranked wallets
+- average future realized-PnL percentile of the top-ranked wallets
+- top-decile hit rate versus the eligible-wallet baseline
+- Spearman correlation between training rank signal and future realized PnL
 
 ## Repository Layout
 
@@ -194,4 +228,4 @@ uv run pytest
 
 ## Status
 
-`main` is through Issue 15. The initial v1 CLI, offline demo flow, docs, and tests are all in place.
+The repository now includes configurable scoring weights and a reproducible walk-forward validation command in addition to the earlier v1 CLI, offline demo flow, docs, and tests.

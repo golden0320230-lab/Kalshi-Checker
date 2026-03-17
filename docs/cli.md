@@ -68,6 +68,22 @@ Compute and persist anomaly scores for all wallets with local history.
 uv run pmat score compute
 ```
 
+### `score backtest`
+
+Run a walk-forward validation against the local historical dataset and export JSON/CSV summaries.
+
+```bash
+uv run pmat score backtest --train-days 90 --test-days 30 --top-n 25
+```
+
+Options:
+
+- `--train-days`: prior-history window used to compute training scores
+- `--test-days`: future evaluation window after the cutoff
+- `--top-n`: ranked-wallet slice used for the top-N metrics
+- `--profiles`: comma-separated set of `configured`, `equal`, and `timing-light`
+- `--output-dir`: destination for exported JSON/CSV summaries
+
 ### `demo run`
 
 Run the full deterministic offline demo flow on fixture-backed data.
@@ -155,6 +171,7 @@ uv run pmat init-db
 uv run pmat ingest seed --leaderboard-window all --top-wallets 25
 uv run pmat ingest enrich --wallet-batch-size 25
 uv run pmat score compute
+uv run pmat score backtest --train-days 90 --test-days 30 --top-n 25
 uv run pmat flag refresh
 uv run pmat watch run --max-cycles 1 --interval-seconds 0
 uv run pmat report top-wallets --limit 10

@@ -142,19 +142,63 @@ The system currently computes:
 - `composite_score`
 - `adjusted_score`
 
-`composite_score` blends the normalized feature columns with fixed weights.
+`composite_score` blends the normalized feature columns with configured weights.
 
-The timing/value block is intentionally lighter than before while it is still being validated:
+The active map lives under `scoring.composite_weights` in [config/settings.example.yaml](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/config/settings.example.yaml).
+
+Validation rules:
+
+- every required normalized feature key must be present
+- the configured weights must sum to `1.0`
+- invalid maps fail settings validation before scoring runs
+
+The default map remains:
 
 - `normalized_value_at_entry_score`: `0.08`
 - `normalized_timing_drift_score`: `0.10`
 - `normalized_timing_positive_capture_score`: `0.06`
+- `normalized_win_rate`: `0.18`
+- `normalized_avg_roi`: `0.14`
+- `normalized_realized_pnl_percentile`: `0.12`
+- `normalized_specialization_score`: `0.12`
+- `normalized_conviction_score`: `0.10`
+- `normalized_consistency_score`: `0.10`
 
-That keeps combined timing/value weight at `0.24` instead of the earlier `0.40` proxy-heavy allocation.
+That keeps combined timing/value weight at `0.24` instead of the earlier proxy-heavy allocation.
 
 `confidence_score` reflects sample size and recency support.
 
 `adjusted_score` is the persisted ranking score used for later candidate and flagged classification.
+
+## Walk-Forward Validation
+
+The repo now includes a repeatable local backtest in [backtest.py](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/src/polymarket_anomaly_tracker/scoring/backtest.py) and the CLI command:
+
+```bash
+uv run pmat score backtest --train-days 90 --test-days 30 --top-n 25
+```
+
+The command:
+
+- picks a train cutoff from the local dataset
+- trains scores on the prior `train-days` window only
+- evaluates realized future outcomes in the following `test-days` window
+- exports JSON and CSV summaries under `data/backtests/`
+
+The current summary metrics are:
+
+- average future ROI of the top-`N` ranked wallets
+- average future realized-PnL percentile of the top-`N` ranked wallets
+- top-decile hit rate versus the full eligible-wallet baseline
+- Spearman correlation between training adjusted score and future realized PnL
+
+The backtest also supports lightweight ablations:
+
+- `configured`
+- `equal`
+- `timing-light`
+
+`configured` uses whatever is currently in `scoring.composite_weights`. The other two are fixed comparison baselines intended to check whether the configured map is doing better than simple alternatives.
 
 ## Explanation Payloads
 

@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from polymarket_anomaly_tracker.config import (
+    DEFAULT_COMPOSITE_SCORE_WEIGHTS,
     DEFAULT_SETTINGS_FILE,
     Settings,
     clear_settings_cache,
@@ -62,6 +64,16 @@ def test_load_settings_from_yaml(tmp_path: Path) -> None:
                 "database_url: sqlite:///tmp/pmat.yaml.db",
                 "scoring:",
                 "  flagged_threshold: 91.5",
+                "  composite_weights:",
+                "    normalized_value_at_entry_score: 0.07",
+                "    normalized_timing_drift_score: 0.11",
+                "    normalized_timing_positive_capture_score: 0.06",
+                "    normalized_win_rate: 0.18",
+                "    normalized_avg_roi: 0.14",
+                "    normalized_realized_pnl_percentile: 0.12",
+                "    normalized_specialization_score: 0.12",
+                "    normalized_conviction_score: 0.10",
+                "    normalized_consistency_score: 0.10",
             ]
         ),
         encoding="utf-8",
@@ -72,6 +84,9 @@ def test_load_settings_from_yaml(tmp_path: Path) -> None:
     assert settings.env == "production"
     assert settings.log_level == "WARNING"
     assert settings.scoring.flagged_threshold == 91.5
+    assert settings.scoring.composite_weights.normalized_value_at_entry_score == pytest.approx(
+        0.07
+    )
 
 
 def test_env_overrides_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +135,60 @@ def test_get_settings_uses_default_yaml_location(
     settings = load_settings(env_file=None)
 
     assert settings.env == "test"
+
+
+def test_load_settings_respects_runtime_settings_file_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_yaml = tmp_path / "runtime-settings.yaml"
+    runtime_yaml.write_text(
+        "\n".join(
+            [
+                "env: production",
+                "scoring:",
+                "  composite_weights:",
+                "    normalized_value_at_entry_score: 0.04",
+                "    normalized_timing_drift_score: 0.05",
+                "    normalized_timing_positive_capture_score: 0.03",
+                "    normalized_win_rate: 0.23",
+                "    normalized_avg_roi: 0.16",
+                "    normalized_realized_pnl_percentile: 0.16",
+                "    normalized_specialization_score: 0.13",
+                "    normalized_conviction_score: 0.11",
+                "    normalized_consistency_score: 0.09",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PMAT_SETTINGS_FILE", str(runtime_yaml))
+
+    settings = load_settings(env_file=None)
+
+    assert settings.env == "production"
+    assert settings.scoring.composite_weights.normalized_win_rate == pytest.approx(0.23)
+
+
+def test_invalid_composite_weight_sum_fails_validation() -> None:
+    invalid_weights = dict(DEFAULT_COMPOSITE_SCORE_WEIGHTS)
+    invalid_weights["normalized_consistency_score"] = 0.25
+
+    with pytest.raises(ValidationError, match="sum to 1.0"):
+        Settings(
+            _env_file=None,
+            scoring={"composite_weights": invalid_weights},
+        )
+
+
+def test_invalid_composite_weight_keys_fail_validation() -> None:
+    invalid_weights = dict(DEFAULT_COMPOSITE_SCORE_WEIGHTS)
+    invalid_weights["normalized_bonus_score"] = 0.01
+
+    with pytest.raises(ValidationError, match="normalized_bonus_score"):
+        Settings(
+            _env_file=None,
+            scoring={"composite_weights": invalid_weights},
+        )
 
 
 def test_configure_logging_is_idempotent() -> None:
