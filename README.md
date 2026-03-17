@@ -19,12 +19,13 @@ Current `main` supports:
 - loading public Polymarket data for leaderboard wallets
 - enriching wallets with profiles, trades, current positions, closed positions, markets, and events
 - computing explainable anomaly features
-- scoring wallets and persisting score snapshots
+- scoring wallets and persisting score snapshots with `pmat score compute`
 - promoting wallets to `candidate` and `flagged`
 - synchronizing a local watchlist for flagged wallets
 - running finite watch cycles and creating local alerts for material position changes
 - rendering ranked and wallet-level reports
 - exporting reports to CSV and JSON
+- running a deterministic offline fixture demo with `pmat demo run`
 
 ## Local-Only Boundary
 
@@ -109,19 +110,7 @@ uv run pmat ingest enrich --wallet-batch-size 25
 Persist scoring snapshots:
 
 ```bash
-uv run python - <<'PY'
-from datetime import UTC, datetime
-
-from polymarket_anomaly_tracker.config import get_settings
-from polymarket_anomaly_tracker.db.session import get_session_factory, session_scope
-from polymarket_anomaly_tracker.scoring.anomaly_score import score_and_persist_wallets
-
-settings = get_settings()
-session_factory = get_session_factory(settings)
-
-with session_scope(session_factory) as session:
-    score_and_persist_wallets(session, as_of_time=datetime.now(UTC))
-PY
+uv run pmat score compute
 ```
 
 Refresh wallet flags and the watchlist:
@@ -150,6 +139,12 @@ uv run pmat report export --report top-wallets --format csv --output data/report
 uv run pmat report export --report wallet --format json --output data/reports/wallet.json --wallet-address 0xYOUR_WALLET_ADDRESS
 ```
 
+Run the full offline demo flow:
+
+```bash
+uv run pmat demo run
+```
+
 ## Current Workflow
 
 The current recommended order is:
@@ -157,12 +152,10 @@ The current recommended order is:
 1. `init-db`
 2. `ingest seed`
 3. `ingest enrich`
-4. score via the Python snippet above
+4. `score compute`
 5. `flag refresh`
 6. `watch run`
 7. `report ...`
-
-Scoring is currently available as a Python entry point, not as a dedicated CLI command yet.
 
 ## Repository Layout
 
@@ -201,4 +194,4 @@ uv run pytest
 
 ## Status
 
-`main` is through Issue 13. The remaining roadmap items are docs polish and the end-to-end fixture demo flow.
+`main` is through Issue 15. The initial v1 CLI, offline demo flow, docs, and tests are all in place.
