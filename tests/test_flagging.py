@@ -158,7 +158,7 @@ def seed_flagging_test_data(database_url: str) -> None:
                 0.80,
                 2,
                 [
-                    "Repeated favorable early entries before price movement",
+                    "Prices moved favorably after entry across forward windows",
                     "Resolved-market win rate ranked near the top of this run",
                 ],
             ),

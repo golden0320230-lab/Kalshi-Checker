@@ -43,6 +43,23 @@ Enrich seeded wallets with profiles, trades, positions, closed positions, market
 uv run pmat ingest enrich --wallet-batch-size 25
 ```
 
+### `ingest market-prices`
+
+Snapshot current market quote data for known markets.
+
+```bash
+uv run pmat ingest market-prices --markets-from-db --max-markets 100
+```
+
+Options:
+
+- `--market-id`: one or more explicit market IDs
+- `--market-file`: file containing one market ID per line
+- `--markets-from-db`: include known local markets
+- `--max-markets`: cap the requested market set
+- `--interval-seconds`: polling sleep between cycles
+- `--max-cycles`: number of polling cycles before exit
+
 ### `score compute`
 
 Compute and persist anomaly scores for all wallets with local history.
