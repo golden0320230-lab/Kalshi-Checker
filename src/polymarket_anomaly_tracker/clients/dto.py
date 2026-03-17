@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class PolymarketBaseDto(BaseModel):
@@ -173,6 +173,12 @@ class MarketDto(PolymarketBaseDto):
     start_date: datetime | None = Field(default=None, alias="startDate")
     liquidity: float | None = None
     volume: float | None = None
+    best_bid: float | None = Field(default=None, alias="bestBid")
+    best_ask: float | None = Field(default=None, alias="bestAsk")
+    last_price: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("lastPrice", "lastTradePrice"),
+    )
     active: bool | None = None
     closed: bool | None = None
     archived: bool | None = None
@@ -181,4 +187,3 @@ class MarketDto(PolymarketBaseDto):
     market_type: str | None = Field(default=None, alias="marketType")
     description: str | None = None
     events: tuple[dict[str, object], ...] | None = None
-

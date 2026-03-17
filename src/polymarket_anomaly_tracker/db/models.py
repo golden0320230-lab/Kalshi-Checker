@@ -87,6 +87,38 @@ class Market(TimestampMixin, Base):
     raw_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
 
 
+class MarketPriceSnapshot(CreatedAtMixin, Base):
+    """Point-in-time market quote and liquidity snapshots."""
+
+    __tablename__ = "market_price_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "market_id",
+            "snapshot_time",
+            "source",
+            name="uq_market_price_snapshots_market_time_source",
+        ),
+        Index(
+            "ix_market_price_snapshots_market_id_snapshot_time",
+            "market_id",
+            "snapshot_time",
+        ),
+        Index("ix_market_price_snapshots_snapshot_time", "snapshot_time"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    market_id: Mapped[str] = mapped_column(ForeignKey("markets.market_id"), nullable=False)
+    snapshot_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    best_bid: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_ask: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mid_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    volume: Mapped[float | None] = mapped_column(Float, nullable=True)
+    liquidity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+
+
 class Trade(CreatedAtMixin, Base):
     """Normalized public trade rows."""
 

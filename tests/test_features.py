@@ -48,6 +48,8 @@ def test_build_wallet_analysis_dataset_and_compute_core_features(tmp_path: Path)
     ]
     assert len(dataset.trades) == 7
     assert len(dataset.closed_positions) == 8
+    assert len(dataset.price_snapshots) == 3
+    assert set(dataset.price_snapshots["market_id"]) == {"market-1", "market-3", "market-8"}
     assert list(feature_frame["wallet_address"]) == [
         ALPHA_WALLET,
         BETA_WALLET,
@@ -113,6 +115,7 @@ def test_build_wallet_analysis_dataset_filters_wallets_and_handles_sparse_data(
     assert list(dataset.wallets["wallet_address"]) == [ALPHA_WALLET, DELTA_WALLET]
     assert set(dataset.trades["wallet_address"]) == {ALPHA_WALLET}
     assert set(dataset.closed_positions["wallet_address"]) == {ALPHA_WALLET, DELTA_WALLET}
+    assert set(dataset.price_snapshots["market_id"]) == {"market-1"}
     assert set(feature_rows) == {ALPHA_WALLET, DELTA_WALLET}
     assert feature_rows[DELTA_WALLET].avg_roi is None
     assert feature_rows[DELTA_WALLET].median_roi is None
@@ -202,6 +205,22 @@ def seed_feature_test_data(database_url: str) -> None:
                 question=f"Question for {market_id}",
                 status="closed",
                 category=category,
+            )
+        for market_id, snapshot_time, best_bid, best_ask, last_price in (
+            ("market-1", observed_at, 0.41, 0.45, 0.44),
+            ("market-3", observed_at, 0.52, 0.56, 0.54),
+            ("market-8", observed_at, 0.73, 0.77, 0.75),
+        ):
+            repository.upsert_market_price_snapshot(
+                market_id=market_id,
+                snapshot_time=snapshot_time,
+                source="fixture",
+                best_bid=best_bid,
+                best_ask=best_ask,
+                mid_price=(best_bid + best_ask) / 2.0,
+                last_price=last_price,
+                volume=1000.0,
+                liquidity=500.0,
             )
 
         seed_alpha_wallet(repository)

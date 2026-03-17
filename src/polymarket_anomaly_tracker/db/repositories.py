@@ -16,6 +16,7 @@ from polymarket_anomaly_tracker.db.models import (
     Event,
     IngestionRun,
     Market,
+    MarketPriceSnapshot,
     PositionSnapshot,
     Trade,
     Wallet,
@@ -206,6 +207,59 @@ class DatabaseRepository:
 
         self.session.flush()
         return market
+
+    def upsert_market_price_snapshot(
+        self,
+        *,
+        market_id: str,
+        snapshot_time: datetime,
+        source: str,
+        best_bid: float | None = None,
+        best_ask: float | None = None,
+        mid_price: float | None = None,
+        last_price: float | None = None,
+        volume: float | None = None,
+        liquidity: float | None = None,
+        raw_json: str = "{}",
+    ) -> MarketPriceSnapshot:
+        """Insert or update a point-in-time market snapshot."""
+
+        snapshot_time = _normalize_required_datetime(snapshot_time)
+        market_price_snapshot = cast(
+            MarketPriceSnapshot | None,
+            self.session.scalar(
+                select(MarketPriceSnapshot).where(
+                    MarketPriceSnapshot.market_id == market_id,
+                    MarketPriceSnapshot.snapshot_time == snapshot_time,
+                    MarketPriceSnapshot.source == source,
+                )
+            ),
+        )
+        if market_price_snapshot is None:
+            market_price_snapshot = MarketPriceSnapshot(
+                market_id=market_id,
+                snapshot_time=snapshot_time,
+                source=source,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                mid_price=mid_price,
+                last_price=last_price,
+                volume=volume,
+                liquidity=liquidity,
+                raw_json=raw_json,
+            )
+            self.session.add(market_price_snapshot)
+        else:
+            market_price_snapshot.best_bid = best_bid
+            market_price_snapshot.best_ask = best_ask
+            market_price_snapshot.mid_price = mid_price
+            market_price_snapshot.last_price = last_price
+            market_price_snapshot.volume = volume
+            market_price_snapshot.liquidity = liquidity
+            market_price_snapshot.raw_json = raw_json
+
+        self.session.flush()
+        return market_price_snapshot
 
     def upsert_trade(
         self,
@@ -646,6 +700,14 @@ class DatabaseRepository:
             Market | None,
             self.session.scalar(select(Market).where(Market.market_id == market_id)),
         )
+
+    def list_market_ids(self, *, limit: int | None = None) -> list[str]:
+        """Return known market IDs in deterministic order."""
+
+        stmt = select(Market.market_id).order_by(Market.market_id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [str(market_id) for market_id in self.session.scalars(stmt).all()]
 
     def get_latest_position_snapshot_time(self, wallet_address: str) -> datetime | None:
         """Return the latest position snapshot timestamp for one wallet."""

@@ -58,6 +58,24 @@ Important fields:
 - `liquidity`
 - `volume`
 
+### `market_price_snapshots`
+
+Point-in-time market quote and liquidity snapshots for timing-aware analysis.
+
+Important fields:
+
+- `market_id`
+- `snapshot_time`
+- `best_bid`
+- `best_ask`
+- `mid_price`
+- `last_price`
+- `volume`
+- `liquidity`
+- `source`
+- `raw_json`
+- `created_at`
+
 ### `trades`
 
 Normalized public trades.

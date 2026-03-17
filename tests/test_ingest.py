@@ -23,6 +23,7 @@ from polymarket_anomaly_tracker.db.models import (
     Event,
     IngestionRun,
     Market,
+    MarketPriceSnapshot,
     PositionSnapshot,
     Trade,
     Wallet,
@@ -33,6 +34,7 @@ from polymarket_anomaly_tracker.ingest.leaderboard import (
     LeaderboardSeedError,
     seed_leaderboard_wallets,
 )
+from polymarket_anomaly_tracker.ingest.market_prices import ingest_market_price_snapshots
 from polymarket_anomaly_tracker.ingest.orchestrator import enrich_seeded_wallets
 from polymarket_anomaly_tracker.main import app
 
@@ -250,6 +252,39 @@ def build_enrichment_client(
     )
 
 
+def build_market_price_client() -> PolymarketRESTClient:
+    """Create a mock client for market price polling."""
+
+    market_payloads = load_fixture_list("market_price_snapshots.json")
+    markets_by_id = {
+        str(payload["conditionId"]): dict(payload)
+        for payload in market_payloads
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/markets":
+            market_ids = list(request.url.params.get_list("id"))
+            payload = [
+                markets_by_id[market_id]
+                for market_id in market_ids
+                if market_id in markets_by_id
+            ]
+            return httpx.Response(200, request=request, json=payload)
+        if request.url.path.startswith("/markets/"):
+            market_id = request.url.path.rsplit("/", maxsplit=1)[-1]
+            payload = markets_by_id.get(market_id)
+            if payload is None:
+                return httpx.Response(404, request=request, json={"detail": "not found"})
+            return httpx.Response(200, request=request, json=payload)
+        return httpx.Response(404, request=request, json={"detail": "not found"})
+
+    return make_client(
+        transport=httpx.MockTransport(handler),
+        max_retries=0,
+        sleep=lambda _: None,
+    )
+
+
 def build_profile_payload(
     *,
     wallet_address: str,
@@ -396,6 +431,20 @@ def seed_wallet_rows(database_url: str, wallet_addresses: list[str]) -> None:
             )
 
 
+def seed_market_rows(database_url: str, market_ids: list[str]) -> None:
+    """Insert known markets directly for market price polling tests."""
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        repository = DatabaseRepository(session)
+        for market_id in market_ids:
+            repository.upsert_market(
+                market_id=market_id,
+                question=f"Question for {market_id}",
+                status="active",
+            )
+
+
 def test_ingest_seed_command_inserts_wallets_and_run_stats(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -531,6 +580,109 @@ def test_seed_leaderboard_wallets_marks_failed_runs(tmp_path: Path) -> None:
         assert run.error_message is not None
         assert "week" in run.metadata_json
         assert wallet_count == 0
+
+
+def test_ingest_market_prices_command_snapshots_known_markets_and_run_stats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = f"sqlite:///{tmp_path / 'market-prices-cli.db'}"
+    init_database(database_url)
+    seed_market_rows(database_url, ["condition-1", "condition-2"])
+
+    def mock_make_client() -> PolymarketRESTClient:
+        return build_market_price_client()
+
+    monkeypatch.setenv("PMAT_DATABASE_URL", database_url)
+    monkeypatch.setattr(
+        "polymarket_anomaly_tracker.ingest.market_prices.make_client",
+        mock_make_client,
+    )
+    clear_settings_cache()
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "ingest",
+                "market-prices",
+                "--markets-from-db",
+                "--max-markets",
+                "10",
+            ],
+        )
+    finally:
+        clear_settings_cache()
+
+    assert result.exit_code == 0
+    assert "Snapshotted market prices." in result.stdout
+    assert "Markets requested: 2." in result.stdout
+    assert "Snapshots written: 2." in result.stdout
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        snapshot_count = session.scalar(select(func.count()).select_from(MarketPriceSnapshot))
+        run = session.scalar(
+            select(IngestionRun).where(
+                IngestionRun.run_type == IngestionRunType.MARKET_PRICES.value
+            )
+        )
+        snapshot = session.scalar(
+            select(MarketPriceSnapshot).where(MarketPriceSnapshot.market_id == "condition-1")
+        )
+
+        assert snapshot_count == 2
+        assert snapshot is not None
+        assert snapshot.best_bid == pytest.approx(0.44)
+        assert snapshot.best_ask == pytest.approx(0.48)
+        assert snapshot.mid_price == pytest.approx(0.46)
+        assert snapshot.last_price == pytest.approx(0.46)
+        assert run is not None
+        assert run.status == IngestionRunStatus.SUCCEEDED.value
+        assert run.records_written == 2
+        assert json.loads(run.metadata_json)["markets_requested"] == 2
+
+
+def test_ingest_market_price_snapshots_is_idempotent(tmp_path: Path) -> None:
+    database_url = f"sqlite:///{tmp_path / 'market-prices-repeat.db'}"
+    init_database(database_url)
+    seed_market_rows(database_url, ["condition-1", "condition-2"])
+
+    first_client = build_market_price_client()
+    second_client = build_market_price_client()
+    snapshot_time = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+
+    try:
+        ingest_market_price_snapshots(
+            database_url=database_url,
+            market_ids=["condition-1", "condition-2"],
+            client=first_client,
+            started_at=snapshot_time,
+        )
+        ingest_market_price_snapshots(
+            database_url=database_url,
+            market_ids=["condition-1", "condition-2"],
+            client=second_client,
+            started_at=snapshot_time,
+        )
+    finally:
+        first_client.close()
+        second_client.close()
+
+    session_factory = create_session_factory(database_url)
+    with session_scope(session_factory) as session:
+        snapshot_count = session.scalar(select(func.count()).select_from(MarketPriceSnapshot))
+        snapshot_rows = session.scalars(
+            select(MarketPriceSnapshot).order_by(
+                MarketPriceSnapshot.market_id,
+                MarketPriceSnapshot.snapshot_time,
+            )
+        ).all()
+
+        assert snapshot_count == 2
+        assert [snapshot.market_id for snapshot in snapshot_rows] == [
+            "condition-1",
+            "condition-2",
+        ]
 
 
 def test_ingest_enrich_command_persists_wallet_data(
