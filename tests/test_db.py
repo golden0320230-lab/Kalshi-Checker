@@ -47,6 +47,7 @@ EXPECTED_TABLES = {
     "events",
     "ingestion_runs",
     "markets",
+    "market_price_snapshots",
     "positions_snapshots",
     "trades",
     "wallet_feature_snapshots",
@@ -57,6 +58,10 @@ EXPECTED_TABLES = {
 EXPECTED_INDEXES = {
     "wallets": {"ix_wallets_is_flagged", "ix_wallets_flag_status"},
     "markets": {"ix_markets_event_id", "ix_markets_category", "ix_markets_status"},
+    "market_price_snapshots": {
+        "ix_market_price_snapshots_market_id_snapshot_time",
+        "ix_market_price_snapshots_snapshot_time",
+    },
     "trades": {
         "ix_trades_wallet_address_trade_time",
         "ix_trades_market_id_trade_time",
@@ -86,6 +91,7 @@ EXPECTED_UNIQUE_CONSTRAINTS = {
     "wallets": {"uq_wallets_wallet_address"},
     "events": {"uq_events_event_id"},
     "markets": {"uq_markets_market_id"},
+    "market_price_snapshots": {"uq_market_price_snapshots_market_time_source"},
     "trades": {"uq_trades_trade_id"},
     "watchlist": {"uq_watchlist_wallet_address"},
 }

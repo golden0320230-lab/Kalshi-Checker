@@ -37,8 +37,9 @@ RAW_SCORE_COLUMNS = (
     "avg_roi",
     "median_roi",
     "realized_pnl_total",
-    "early_entry_edge",
-    "timing_score",
+    "value_at_entry_score",
+    "timing_drift_score",
+    "timing_positive_capture_score",
     "specialization_score",
     "specialization_category",
     "conviction_score",
@@ -46,8 +47,9 @@ RAW_SCORE_COLUMNS = (
 )
 
 NORMALIZED_SCORE_COLUMNS = (
-    "normalized_early_entry_edge",
-    "normalized_timing_score",
+    "normalized_value_at_entry_score",
+    "normalized_timing_drift_score",
+    "normalized_timing_positive_capture_score",
     "normalized_win_rate",
     "normalized_avg_roi",
     "normalized_realized_pnl_percentile",
@@ -65,8 +67,9 @@ SCORING_FRAME_COLUMNS = RAW_SCORE_COLUMNS + NORMALIZED_SCORE_COLUMNS + (
 )
 
 NORMALIZED_COLUMN_MAPPING = {
-    "early_entry_edge": "normalized_early_entry_edge",
-    "timing_score": "normalized_timing_score",
+    "value_at_entry_score": "normalized_value_at_entry_score",
+    "timing_drift_score": "normalized_timing_drift_score",
+    "timing_positive_capture_score": "normalized_timing_positive_capture_score",
     "win_rate": "normalized_win_rate",
     "avg_roi": "normalized_avg_roi",
     "realized_pnl_total": "normalized_realized_pnl_percentile",
@@ -75,16 +78,22 @@ NORMALIZED_COLUMN_MAPPING = {
     "consistency_score": "normalized_consistency_score",
 }
 
-COMPOSITE_SCORE_WEIGHTS = {
-    "normalized_early_entry_edge": 0.22,
-    "normalized_timing_score": 0.18,
-    "normalized_win_rate": 0.15,
-    "normalized_avg_roi": 0.12,
-    "normalized_realized_pnl_percentile": 0.10,
-    "normalized_specialization_score": 0.10,
-    "normalized_conviction_score": 0.08,
-    "normalized_consistency_score": 0.05,
+TIMING_VALUE_SCORE_WEIGHTS = {
+    "normalized_value_at_entry_score": 0.08,
+    "normalized_timing_drift_score": 0.10,
+    "normalized_timing_positive_capture_score": 0.06,
 }
+
+PERFORMANCE_SCORE_WEIGHTS = {
+    "normalized_win_rate": 0.18,
+    "normalized_avg_roi": 0.14,
+    "normalized_realized_pnl_percentile": 0.12,
+    "normalized_specialization_score": 0.12,
+    "normalized_conviction_score": 0.10,
+    "normalized_consistency_score": 0.10,
+}
+
+COMPOSITE_SCORE_WEIGHTS = TIMING_VALUE_SCORE_WEIGHTS | PERFORMANCE_SCORE_WEIGHTS
 
 
 def compute_anomaly_score_frame(
@@ -199,11 +208,14 @@ def persist_score_frame(session: Session, score_frame: pd.DataFrame) -> None:
             avg_roi=_normalize_optional_float(row["avg_roi"]),
             median_roi=_normalize_optional_float(row["median_roi"]),
             realized_pnl_total=_normalize_optional_float(row["realized_pnl_total"]),
-            early_entry_edge=_normalize_optional_float(row["early_entry_edge"]),
+            value_at_entry_score=_normalize_optional_float(row["value_at_entry_score"]),
             specialization_score=_normalize_optional_float(row["specialization_score"]),
             conviction_score=_normalize_optional_float(row["conviction_score"]),
             consistency_score=_normalize_optional_float(row["consistency_score"]),
-            timing_score=_normalize_optional_float(row["timing_score"]),
+            timing_drift_score=_normalize_optional_float(row["timing_drift_score"]),
+            timing_positive_capture_score=_normalize_optional_float(
+                row["timing_positive_capture_score"]
+            ),
             composite_score=_normalize_optional_float(row["composite_score"]),
             confidence_score=_normalize_optional_float(row["confidence_score"]),
             adjusted_score=_normalize_optional_float(row["adjusted_score"]),
@@ -247,8 +259,9 @@ def _build_raw_score_rows(
                 "avg_roi": core_row.avg_roi,
                 "median_roi": core_row.median_roi,
                 "realized_pnl_total": core_row.realized_pnl_total,
-                "early_entry_edge": timing_row.early_entry_edge,
-                "timing_score": timing_row.timing_score,
+                "value_at_entry_score": timing_row.value_at_entry_score,
+                "timing_drift_score": timing_row.timing_drift_score,
+                "timing_positive_capture_score": timing_row.timing_positive_capture_score,
                 "specialization_score": specialization_row.specialization_score,
                 "specialization_category": specialization_row.specialization_category,
                 "conviction_score": conviction_row.conviction_score,
@@ -300,13 +313,18 @@ def _ensure_feature_snapshot_schema_is_current(session: Session) -> None:
     existing_columns = {
         column["name"] for column in inspector.get_columns("wallet_feature_snapshots")
     }
-    if "adjusted_score" in existing_columns:
+    required_columns = {
+        "adjusted_score",
+        "value_at_entry_score",
+        "timing_drift_score",
+        "timing_positive_capture_score",
+    }
+    if required_columns <= existing_columns:
         return
 
     database_url = _normalize_required_string(bind.engine.url.render_as_string(hide_password=False))
     raise RuntimeError(
         "Database schema is out of date for scoring. "
-        "Issue 10 requires the `wallet_feature_snapshots.adjusted_score` column. "
         "Run `uv run pmat init-db` against the same database URL, then retry. "
         f"Current database: {database_url}"
     )

@@ -16,6 +16,7 @@ from polymarket_anomaly_tracker.db.models import (
     Event,
     IngestionRun,
     Market,
+    MarketPriceSnapshot,
     PositionSnapshot,
     Trade,
     Wallet,
@@ -207,6 +208,59 @@ class DatabaseRepository:
         self.session.flush()
         return market
 
+    def upsert_market_price_snapshot(
+        self,
+        *,
+        market_id: str,
+        snapshot_time: datetime,
+        source: str,
+        best_bid: float | None = None,
+        best_ask: float | None = None,
+        mid_price: float | None = None,
+        last_price: float | None = None,
+        volume: float | None = None,
+        liquidity: float | None = None,
+        raw_json: str = "{}",
+    ) -> MarketPriceSnapshot:
+        """Insert or update a point-in-time market snapshot."""
+
+        snapshot_time = _normalize_required_datetime(snapshot_time)
+        market_price_snapshot = cast(
+            MarketPriceSnapshot | None,
+            self.session.scalar(
+                select(MarketPriceSnapshot).where(
+                    MarketPriceSnapshot.market_id == market_id,
+                    MarketPriceSnapshot.snapshot_time == snapshot_time,
+                    MarketPriceSnapshot.source == source,
+                )
+            ),
+        )
+        if market_price_snapshot is None:
+            market_price_snapshot = MarketPriceSnapshot(
+                market_id=market_id,
+                snapshot_time=snapshot_time,
+                source=source,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                mid_price=mid_price,
+                last_price=last_price,
+                volume=volume,
+                liquidity=liquidity,
+                raw_json=raw_json,
+            )
+            self.session.add(market_price_snapshot)
+        else:
+            market_price_snapshot.best_bid = best_bid
+            market_price_snapshot.best_ask = best_ask
+            market_price_snapshot.mid_price = mid_price
+            market_price_snapshot.last_price = last_price
+            market_price_snapshot.volume = volume
+            market_price_snapshot.liquidity = liquidity
+            market_price_snapshot.raw_json = raw_json
+
+        self.session.flush()
+        return market_price_snapshot
+
     def upsert_trade(
         self,
         *,
@@ -396,10 +450,13 @@ class DatabaseRepository:
         median_roi: float | None = None,
         realized_pnl_total: float | None = None,
         early_entry_edge: float | None = None,
+        value_at_entry_score: float | None = None,
         specialization_score: float | None = None,
         conviction_score: float | None = None,
         consistency_score: float | None = None,
         timing_score: float | None = None,
+        timing_drift_score: float | None = None,
+        timing_positive_capture_score: float | None = None,
         composite_score: float | None = None,
         confidence_score: float | None = None,
         adjusted_score: float | None = None,
@@ -428,10 +485,13 @@ class DatabaseRepository:
                 median_roi=median_roi,
                 realized_pnl_total=realized_pnl_total,
                 early_entry_edge=early_entry_edge,
+                value_at_entry_score=value_at_entry_score,
                 specialization_score=specialization_score,
                 conviction_score=conviction_score,
                 consistency_score=consistency_score,
                 timing_score=timing_score,
+                timing_drift_score=timing_drift_score,
+                timing_positive_capture_score=timing_positive_capture_score,
                 composite_score=composite_score,
                 confidence_score=confidence_score,
                 adjusted_score=adjusted_score,
@@ -446,10 +506,13 @@ class DatabaseRepository:
             feature_snapshot.median_roi = median_roi
             feature_snapshot.realized_pnl_total = realized_pnl_total
             feature_snapshot.early_entry_edge = early_entry_edge
+            feature_snapshot.value_at_entry_score = value_at_entry_score
             feature_snapshot.specialization_score = specialization_score
             feature_snapshot.conviction_score = conviction_score
             feature_snapshot.consistency_score = consistency_score
             feature_snapshot.timing_score = timing_score
+            feature_snapshot.timing_drift_score = timing_drift_score
+            feature_snapshot.timing_positive_capture_score = timing_positive_capture_score
             feature_snapshot.composite_score = composite_score
             feature_snapshot.confidence_score = confidence_score
             feature_snapshot.adjusted_score = adjusted_score
@@ -646,6 +709,14 @@ class DatabaseRepository:
             Market | None,
             self.session.scalar(select(Market).where(Market.market_id == market_id)),
         )
+
+    def list_market_ids(self, *, limit: int | None = None) -> list[str]:
+        """Return known market IDs in deterministic order."""
+
+        stmt = select(Market.market_id).order_by(Market.market_id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [str(market_id) for market_id in self.session.scalars(stmt).all()]
 
     def get_latest_position_snapshot_time(self, wallet_address: str) -> datetime | None:
         """Return the latest position snapshot timestamp for one wallet."""

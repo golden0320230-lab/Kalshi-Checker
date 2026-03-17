@@ -40,6 +40,17 @@ MARKET_DATASET_COLUMNS = (
     "market_id",
     "category",
 )
+PRICE_SNAPSHOT_DATASET_COLUMNS = (
+    "market_id",
+    "snapshot_time",
+    "best_bid",
+    "best_ask",
+    "mid_price",
+    "last_price",
+    "volume",
+    "liquidity",
+    "source",
+)
 CORE_PNL_FEATURE_COLUMNS = (
     "wallet_address",
     "display_name",
@@ -60,6 +71,7 @@ class WalletAnalysisDataset:
     trades: pd.DataFrame
     closed_positions: pd.DataFrame
     markets: pd.DataFrame
+    price_snapshots: pd.DataFrame
 
 
 @dataclass(frozen=True)

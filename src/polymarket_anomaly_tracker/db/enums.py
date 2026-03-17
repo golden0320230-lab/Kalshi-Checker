@@ -57,7 +57,7 @@ class IngestionRunType(StrEnum):
     """Top-level run categories tracked in the database."""
 
     LEADERBOARD = "leaderboard"
+    MARKET_PRICES = "market_prices"
     WALLET_ENRICHMENT = "wallet_enrichment"
     FEATURES = "features"
     WATCH = "watch"
-
