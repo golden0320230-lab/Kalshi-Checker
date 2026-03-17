@@ -213,6 +213,7 @@ Kalshi-Checker/
 ## Docs
 
 - [docs/architecture.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/architecture.md)
+- [docs/best-usage.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/best-usage.md)
 - [docs/scoring.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/scoring.md)
 - [docs/schema.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/schema.md)
 - [docs/cli.md](/Users/aliel-asmar/Desktop/CopyTrader/Kalshi-Checker/docs/cli.md)
